@@ -2,13 +2,19 @@
 (function () {
   const canvas = document.getElementById('stars-canvas');
   const ctx    = canvas.getContext('2d');
-  const { lerpAngle, addTrailPoint, getGlobeBounds } = window.CosmicUtils;
 
   let spaceship    = null;
   let shipImpacts  = [];
   let shipDebris   = [];
   let lasers       = [];
   let laserImpacts = [];
+
+  function lerpAngle(a, b, t) {
+    let d = (b - a) % (Math.PI * 2);
+    if (d >  Math.PI) d -= Math.PI * 2;
+    if (d < -Math.PI) d += Math.PI * 2;
+    return a + d * Math.min(1, t);
+  }
 
   function emitSmoke() {
     if (!spaceship) return;
@@ -233,30 +239,6 @@
     }
   }
 
-  function computeLandingPos() {
-    const globeEl = document.getElementById('globe-canvas');
-    if (globeEl) {
-      const gr     = globeEl.getBoundingClientRect();
-      const gcx    = gr.left + gr.width  / 2;
-      const gcy    = gr.top  + gr.height / 2;
-      const globeR = gr.width * 0.22;
-      return { x: gcx, y: Math.max(canvas.height * 0.2, gcy - globeR * 2.2) };
-    }
-    return { x: canvas.width / 2, y: canvas.height * 0.38 };
-  }
-
-  function spawnWithIntro() {
-    const pos    = computeLandingPos();
-    const startY = -40;
-    return {
-      x: pos.x, y: startY,
-      targetX: pos.x, targetY: pos.y,
-      vx: 0, vy: 0,
-      angle: 0, active: false, alpha: 1, emitAccum: 0, bounceCD: 0, hits: 0,
-      intro: { age: 0, duration: 1.8, startX: pos.x, startY, endX: pos.x, endY: pos.y },
-    };
-  }
-
   function updateSpaceship(dt) {
     for (let i = shipImpacts.length - 1; i >= 0; i--) {
       shipImpacts[i].age += dt;
@@ -282,7 +264,8 @@
       for (let i = lasers.length - 1; i >= 0; i--) {
         const l   = lasers[i];
         l.age    += dt;
-        addTrailPoint(l.trail, 6, l.x, l.y);
+        l.trail.unshift({ x: l.x, y: l.y });
+        if (l.trail.length > 6) l.trail.pop();
         l.x += l.vx * dt;
         l.y += l.vy * dt;
 
@@ -329,54 +312,7 @@
       spaceship.vy *= Math.pow(0.95, dt * 60);
       spaceship.x  += spaceship.vx * dt;
       spaceship.y  += spaceship.vy * dt;
-      if (spaceship.explodeAge >= spaceship.explodeMaxAge) {
-        spaceship = spawnWithIntro();
-      }
-      return;
-    }
-
-    if (spaceship.intro) {
-      const intro = spaceship.intro;
-      intro.age += dt;
-      const t    = Math.min(1, intro.age / intro.duration);
-      // quartic ease-out: slams in fast, long deceleration tail like retro-rocket braking
-      const ease = 1 - Math.pow(1 - t, 4);
-      const prevX = spaceship.x, prevY = spaceship.y;
-      spaceship.x     = intro.startX + (intro.endX - intro.startX) * ease;
-      spaceship.y     = intro.startY + (intro.endY - intro.startY) * ease;
-      spaceship.vx    = dt > 0 ? (spaceship.x - prevX) / dt : 0;
-      spaceship.vy    = dt > 0 ? (spaceship.y - prevY) / dt : 0;
-      spaceship.angle = 0;
-      const spd = Math.hypot(spaceship.vx, spaceship.vy);
-      const smokeLimit = window.perfMode ? 60 : 300;
-      if (spd > 25 && window.smokeParticles && window.smokeParticles.length < smokeLimit) {
-        spaceship.emitAccum += dt * (spd / 38) * 60;
-        while (spaceship.emitAccum >= 1) {
-          // Retro-rocket thrust: shoot below the ship, faster than the ship's descent
-          const spread      = (Math.random() - 0.5) * 1.2;
-          const thrustSpeed = 220 + Math.random() * 160;
-          window.smokeParticles.push({
-            x: spaceship.x + (Math.random() - 0.5) * 8,
-            y: spaceship.y + 12,
-            vx: Math.sin(spread) * thrustSpeed * 0.55,
-            vy: spaceship.vy + thrustSpeed,
-            life: 0.5 + Math.random() * 0.35,
-            maxLife: 0.82,
-            r: 4 + Math.random() * 5,
-            core: Math.random() < 0.45,
-          });
-          spaceship.emitAccum--;
-        }
-      }
-      if (t >= 1) {
-        spaceship.intro   = null;
-        spaceship.x       = intro.endX;
-        spaceship.y       = intro.endY;
-        spaceship.vx      = 0;
-        spaceship.vy      = 0;
-        spaceship.targetX = intro.endX;
-        spaceship.targetY = intro.endY;
-      }
+      if (spaceship.explodeAge >= spaceship.explodeMaxAge) spaceship = null;
       return;
     }
 
@@ -409,27 +345,35 @@
       const aimDx = spaceship._aimX - spaceship.x;
       const aimDy = spaceship._aimY - spaceship.y;
       if (Math.hypot(aimDx, aimDy) > 5) {
-        spaceship.angle = lerpAngle(spaceship.angle, Math.atan2(aimDy, aimDx) + Math.PI / 2, dt * 12);
+        spaceship.angle = Math.atan2(aimDy, aimDx) + Math.PI / 2;
       }
-    } else if (spd > 25) {
-      spaceship.angle = lerpAngle(spaceship.angle, Math.atan2(spaceship.vy, spaceship.vx) + Math.PI / 2, dt * 8);
+    } else if (spd > 12) {
+      spaceship.angle = lerpAngle(
+        spaceship.angle,
+        Math.atan2(spaceship.vy, spaceship.vx) + Math.PI / 2,
+        Math.min(1, dt * 14)
+      );
     }
 
-    if (spd > 25 && window.smokeParticles.length < (window.perfMode ? 60 : 300)) {
+    if (spd > 25 && window.smokeParticles.length < 300) {
       spaceship.emitAccum += dt * (spd / 80) * 60;
       while (spaceship.emitAccum >= 1) { emitSmoke(); spaceship.emitAccum--; }
     }
 
     if (spaceship.bounceCD > 0) spaceship.bounceCD -= dt;
 
-    const gb = getGlobeBounds();
-    if (gb) {
-      const bdx   = spaceship.x - gb.x, bdy = spaceship.y - gb.y;
-      const bdist = Math.hypot(bdx, bdy);
-      if (bdist < gb.r + 8) {
+    const globeEl = document.getElementById('globe-canvas');
+    if (globeEl) {
+      const gr     = globeEl.getBoundingClientRect();
+      const gcx    = gr.left + gr.width  / 2;
+      const gcy    = gr.top  + gr.height / 2;
+      const globeR = gr.width * 0.22;
+      const bdx    = spaceship.x - gcx, bdy = spaceship.y - gcy;
+      const bdist  = Math.hypot(bdx, bdy);
+      if (bdist < globeR + 8) {
         const nx  = bdx / (bdist || 1), ny = bdy / (bdist || 1);
-        spaceship.x = gb.x + nx * (gb.r + 8);
-        spaceship.y = gb.y + ny * (gb.r + 8);
+        spaceship.x = gcx + nx * (globeR + 8);
+        spaceship.y = gcy + ny * (globeR + 8);
         const dot = spaceship.vx * nx + spaceship.vy * ny;
         if (spaceship.bounceCD <= 0) {
           if (dot < 0) {
@@ -441,7 +385,7 @@
             window.dispatchEvent(new CustomEvent('comet-globe-impact',
               { detail: { x: spaceship.x, y: spaceship.y, vx: inVx, vy: inVy, source: 'spaceship' } }));
             spaceship.hits++;
-            if (spaceship.hits >= 20) triggerShipExplosion();
+            if (spaceship.hits >= 10) triggerShipExplosion();
           }
           spaceship.bounceCD = 0.5;
         } else if (dot < 0) {
@@ -451,14 +395,14 @@
       }
     }
 
-    const moon = window.getMoonScreenPos ? window.getMoonScreenPos() : null;
-    if (moon) {
-      const bdx   = spaceship.x - moon.x, bdy = spaceship.y - moon.y;
+    if (window.getMoonScreenPos) {
+      const m     = window.getMoonScreenPos();
+      const bdx   = spaceship.x - m.x, bdy = spaceship.y - m.y;
       const bdist = Math.hypot(bdx, bdy);
-      if (bdist < moon.r + 8) {
+      if (bdist < m.r + 8) {
         const nx  = bdx / (bdist || 1), ny = bdy / (bdist || 1);
-        spaceship.x = moon.x + nx * (moon.r + 8);
-        spaceship.y = moon.y + ny * (moon.r + 8);
+        spaceship.x = m.x + nx * (m.r + 8);
+        spaceship.y = m.y + ny * (m.r + 8);
         const dot = spaceship.vx * nx + spaceship.vy * ny;
         if (spaceship.bounceCD <= 0) {
           if (dot < 0) {
@@ -470,7 +414,7 @@
             window.dispatchEvent(new CustomEvent('comet-moon-impact',
               { detail: { vx: inVx, vy: inVy, source: 'spaceship' } }));
             spaceship.hits++;
-            if (spaceship.hits >= 20) triggerShipExplosion();
+            if (spaceship.hits >= 10) triggerShipExplosion();
           }
           spaceship.bounceCD = 0.5;
         } else if (dot < 0) {
@@ -669,12 +613,12 @@
     }
 
     const hits    = spaceship.hits;
-    const hitFrac = Math.min(hits / 19, 1);
+    const hitFrac = Math.min(hits / 9, 1);
     const now     = Date.now();
     const cl = (a, b, t) => Math.round(a + (b - a) * t);
     let fl = 0, warnFreq = 0;
-    if (hits >= 14) {
-      warnFreq = [0.7, 1.3, 2.2][Math.min(Math.floor(hits - 14), 2)];
+    if (hits >= 7) {
+      warnFreq = [0.7, 1.3, 2.2][Math.min(Math.floor(hits - 7), 2)];
       fl = (Math.sin(now / 1000 * warnFreq * Math.PI * 2) + 1) / 2;
     }
     const topR = cl(cl(192, 255, hitFrac), 255, fl * 0.92);
@@ -698,91 +642,9 @@
     ctx.translate(spaceship.x, spaceship.y);
     ctx.scale(gs, gs);
 
-    if (spaceship.intro) {
-      const t       = Math.min(1, spaceship.intro.age / spaceship.intro.duration);
-      const fadeIn  = Math.min(1, t / 0.15);
-      const fadeOut = t > 0.50 ? 1 - (t - 0.50) / 0.50 : 1;
-      const bAlpha  = fadeIn * fadeOut;
-      const pulse   = 0.5 + 0.5 * Math.sin(Date.now() / 800 * Math.PI * 2);
-      const shieldR = 30;
-
-      ctx.save();
-
-      // Outer halo bloom
-      const halo = ctx.createRadialGradient(0, 0, shieldR * 0.5, 0, 0, shieldR * 2.0);
-      halo.addColorStop(0,   `rgba(0, 245, 255, 0)`);
-      halo.addColorStop(0.5, `rgba(0, 245, 255, ${bAlpha * 0.08})`);
-      halo.addColorStop(1,   `rgba(0, 245, 255, 0)`);
-      ctx.fillStyle = halo;
-      ctx.beginPath();
-      ctx.arc(0, 0, shieldR * 2.0, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Rim lighting — bright at edge, hollow center (Fresnel)
-      const rim = ctx.createRadialGradient(0, 0, shieldR * 0.52, 0, 0, shieldR);
-      rim.addColorStop(0,    `rgba(0, 210, 255, ${bAlpha * 0.02})`);
-      rim.addColorStop(0.72, `rgba(0, 220, 255, ${bAlpha * 0.09})`);
-      rim.addColorStop(0.88, `rgba(40, 235, 255, ${bAlpha * 0.20})`);
-      rim.addColorStop(1,    `rgba(0, 215, 255,  ${bAlpha * 0.28})`);
-      ctx.fillStyle = rim;
-      ctx.beginPath();
-      ctx.arc(0, 0, shieldR, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Inner depth shadow — lower-right darker zone
-      const shadow = ctx.createRadialGradient(6, 9, 0, 6, 9, shieldR * 0.9);
-      shadow.addColorStop(0,   `rgba(0, 20, 70, ${bAlpha * 0.22})`);
-      shadow.addColorStop(0.5, `rgba(0, 15, 55, ${bAlpha * 0.10})`);
-      shadow.addColorStop(1,   `rgba(0,  0,  0, 0)`);
-      ctx.fillStyle = shadow;
-      ctx.beginPath();
-      ctx.arc(0, 0, shieldR, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Specular highlight — top-left crescent (light source)
-      const spec = ctx.createRadialGradient(-11, -13, 0, -11, -13, shieldR * 0.55);
-      spec.addColorStop(0,    `rgba(210, 255, 255, ${bAlpha * 0.60})`);
-      spec.addColorStop(0.22, `rgba(120, 245, 255, ${bAlpha * 0.25})`);
-      spec.addColorStop(0.50, `rgba(0,   210, 255, ${bAlpha * 0.07})`);
-      spec.addColorStop(1,    `rgba(0,   200, 255, 0)`);
-      ctx.fillStyle = spec;
-      ctx.beginPath();
-      ctx.arc(0, 0, shieldR, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Small secondary glint — bottom-right
-      const glint = ctx.createRadialGradient(12, 14, 0, 12, 14, shieldR * 0.28);
-      glint.addColorStop(0,   `rgba(180, 255, 255, ${bAlpha * 0.22})`);
-      glint.addColorStop(1,   `rgba(0, 200, 255, 0)`);
-      ctx.fillStyle = glint;
-      ctx.beginPath();
-      ctx.arc(0, 0, shieldR, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Magenta inner ring
-      ctx.shadowColor = 'rgba(255, 0, 187, 1)';
-      ctx.shadowBlur  = 6 + pulse * 5;
-      ctx.strokeStyle = `rgba(255, 0, 187, ${bAlpha * (0.35 + pulse * 0.18)})`;
-      ctx.lineWidth   = 0.7;
-      ctx.beginPath();
-      ctx.arc(0, 0, shieldR * 0.75, 0, Math.PI * 2);
-      ctx.stroke();
-
-      // Cyan outer ring
-      ctx.shadowColor = 'rgba(0, 245, 255, 1)';
-      ctx.shadowBlur  = 10 + pulse * 8;
-      ctx.strokeStyle = `rgba(0, 245, 255, ${bAlpha * (0.60 + pulse * 0.28)})`;
-      ctx.lineWidth   = 1.0 + pulse * 0.5;
-      ctx.beginPath();
-      ctx.arc(0, 0, shieldR, 0, Math.PI * 2);
-      ctx.stroke();
-
-      ctx.restore();
-    }
-
     if (hits >= 7 && !spaceship.swirl) {
       const period   = 1000 / warnFreq;
-      const maxRingR = 55 + (hits - 14) * 14;
+      const maxRingR = 55 + (hits - 7) * 14;
       ctx.save();
       for (let ri = 0; ri < 2; ri++) {
         const phase  = ((now + ri * period * 0.5) % period) / period;
@@ -807,7 +669,7 @@
     }
 
     ctx.shadowColor = `rgba(${glR}, ${glG}, ${glB}, 0.9)`;
-    ctx.shadowBlur  = window.perfMode ? 0 : 14 + (hits >= 7 ? fl * 28 : 0);
+    ctx.shadowBlur  = 14 + (hits >= 7 ? fl * 28 : 0);
 
     ctx.beginPath();
     ctx.moveTo( 0, -15);
@@ -832,7 +694,7 @@
     ctx.stroke();
 
     ctx.shadowColor = 'rgba(148, 232, 255, 0.9)';
-    ctx.shadowBlur  = window.perfMode ? 0 : 8;
+    ctx.shadowBlur  = 8;
     ctx.beginPath();
     ctx.ellipse(0, -6, 2.5, 5, 0, 0, Math.PI * 2);
     ctx.fillStyle   = 'rgba(172, 238, 255, 0.92)';
@@ -846,7 +708,7 @@
 
     // Health bar — screen-aligned, below the ship
     if (!spaceship.exploding && !spaceship.swirl && spaceship.alpha > 0.05) {
-      const health = Math.max(0, (20 - spaceship.hits) / 20);
+      const health = Math.max(0, (10 - spaceship.hits) / 10);
       const gs2    = window.gadgetScale || 1;
       const BAR_W  = 36 * gs2, BAR_H = 4 * gs2;
       const bx     = spaceship.x - BAR_W / 2;
@@ -875,7 +737,7 @@
 
         let barAlpha = 0.92;
         if (health <= 0.3 && hits >= 7) {
-          const pf = [0.7, 1.3, 2.2][Math.min(Math.floor(hits - 14), 2)];
+          const pf = [0.7, 1.3, 2.2][Math.min(Math.floor(hits - 7), 2)];
           barAlpha  = 0.60 + ((Math.sin(Date.now() / 1000 * pf * Math.PI * 2) + 1) / 2) * 0.40;
         }
 
@@ -895,7 +757,7 @@
   window.startSpaceship = function(x, y) {
     if (!spaceship) {
       spaceship = { x, y, targetX: x, targetY: y, vx: 0, vy: 0, angle: 0, active: true, alpha: 1, emitAccum: 0, bounceCD: 0, hits: 0 };
-    } else if (!spaceship.intro && !spaceship.exploding && !spaceship.swirl) {
+    } else if (!spaceship.exploding && !spaceship.swirl) {
       spaceship.targetX = x;
       spaceship.targetY = y;
       spaceship.active  = true;
@@ -903,29 +765,19 @@
     }
   };
   window.updateSpaceshipTarget = function(x, y) {
-    if (spaceship) {
-      spaceship.targetX = x;
-      spaceship.targetY = y;
-      spaceship._aimX   = x;
-      spaceship._aimY   = y;
-    }
+    if (spaceship) { spaceship.targetX = x; spaceship.targetY = y; }
   };
   window.releaseSpaceship = function() {
-    if (!spaceship || spaceship.intro) return;
-    spaceship.active = false;
-    spaceship._aimX  = null;
-    spaceship._aimY  = null;
+    if (spaceship) spaceship.active = false;
   };
 
   window.fireSpaceshipLaser = function(targetX, targetY) {
-    if (!spaceship || spaceship.intro || spaceship.exploding || spaceship.swirl) return;
+    if (!spaceship || spaceship.exploding || spaceship.swirl) return;
     const dx   = targetX - spaceship.x;
     const dy   = targetY - spaceship.y;
     const dist = Math.hypot(dx, dy);
     if (dist < 1) return;
     const nx = dx / dist, ny = dy / dist;
-    spaceship._aimX = targetX;
-    spaceship._aimY = targetY;
     spaceship.angle = Math.atan2(ny, nx) + Math.PI / 2;
     lasers.push({
       x: spaceship.x + nx * 18, y: spaceship.y + ny * 18,
@@ -940,15 +792,11 @@
     get:              () => spaceship,
     triggerExplosion: triggerShipExplosion,
     hit(x, y, vx, vy, damage) {
-      if (!spaceship || spaceship.intro || spaceship.exploding || spaceship.swirl) return;
+      if (!spaceship || spaceship.exploding || spaceship.swirl) return;
       spaceship.hits += damage;
       spawnShipImpact(x, y);
       spawnBounceDebris(x, y, vx, vy);
-      if (spaceship.hits >= 20) triggerShipExplosion();
+      if (spaceship.hits >= 10) triggerShipExplosion();
     },
   };
-
-  window.addEventListener('load', function () {
-    spaceship = spawnWithIntro();
-  });
 })();

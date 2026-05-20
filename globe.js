@@ -5,7 +5,13 @@
   const TILT_X       = 0.35;
   const FOV_DIST     = 500;
   const ROT_SPEED     = 0.004;
-  const SPIN_DECAY    = 0.03;
+  const SPIN_DECAY    = 0.03;   // lerp rate back to ROT_SPEED after a snap impulse
+  const IMPULSE_SCALE = 0.022;  // canvas-px → rad/frame conversion for the snap kick
+  const MOUSE_RADIUS = 80;
+  const ATTRACT_STR  = 0.35;
+  const SPRING_LERP  = 0.12;
+  const GRAB_RADIUS  = 15;
+  const DRAG_ANGLE   = 0.65;
   const WAVE_SPEED   = 3.5;
   const W            = 500;
   const H            = 500;
@@ -28,6 +34,10 @@
 
   let rotY          = 0;
   let rotSpeed      = ROT_SPEED;
+  let mouseX        = -9999;
+  let mouseY        = -9999;
+  let mouseInside   = false;
+  let dragVertex    = null;
   let ripple           = null;
   let snapStartTime    = 0;
   let frostPatches     = [];
@@ -56,8 +66,9 @@
           projX: 0, projY: 0,
           driftX: 0, driftY: 0,
           rippleDisp: 0,
+          dragWeight: 0,
           snapping: false, _snapDX0: 0, _snapDY0: 0,
-          _scale: 1, _rz: 0,
+          _scale: 1, _rz: 0, _heatDist: MOUSE_RADIUS + 1,
         };
         vertices.push(v);
         sortedVertices.push(v);
@@ -86,14 +97,53 @@
     }
   }
 
-  function updateSnap() {
+  function updateSprings() {
+    const ddx = dragVertex ? mouseX - dragVertex.projX : 0;
+    const ddy = dragVertex ? mouseY - dragVertex.projY : 0;
     const snapT = (Date.now() - snapStartTime) / 1000;
+
     for (let i = 0; i < vertices.length; i++) {
       const v = vertices[i];
-      if (!v.snapping) continue;
-      v.driftX = snapEval(v._snapDX0, snapT);
-      v.driftY = snapEval(v._snapDY0, snapT);
-      if (snapT > 0.6) { v.driftX = 0; v.driftY = 0; v.snapping = false; }
+
+      // — drag cluster: moves rigidly with the mouse, weighted by angular falloff —
+      if (dragVertex && v.dragWeight > 0) {
+        v.driftX    = v.dragWeight * ddx;
+        v.driftY    = v.dragWeight * ddy;
+        v._heatDist = (1 - v.dragWeight) * MOUSE_RADIUS;
+        continue;
+      }
+
+      // — elastic snap-back via analytical damped spring —
+      if (v.snapping) {
+        v.driftX = snapEval(v._snapDX0, snapT);
+        v.driftY = snapEval(v._snapDY0, snapT);
+        v._heatDist += (MOUSE_RADIUS + 1 - v._heatDist) * 0.12;
+        if (snapT > 0.6) { v.driftX = 0; v.driftY = 0; v.snapping = false; }
+        continue;
+      }
+
+      // — normal hover spring (front hemisphere only) —
+      if (v._rz >= 0) {
+        v._heatDist += (MOUSE_RADIUS + 1 - v._heatDist) * 0.12;
+        v.driftX += (0 - v.driftX) * SPRING_LERP;
+        v.driftY += (0 - v.driftY) * SPRING_LERP;
+        continue;
+      }
+      const dx   = mouseX - v.projX;
+      const dy   = mouseY - v.projY;
+      const dist = Math.hypot(dx, dy);
+      v._heatDist = dist;
+
+      let tdx = 0, tdy = 0;
+      if (dist > 0 && dist < MOUSE_RADIUS) {
+        const s = (1 - dist / MOUSE_RADIUS) * ATTRACT_STR;
+        tdx = dx * s;
+        tdy = dy * s;
+      }
+      v.driftX += (tdx - v.driftX) * SPRING_LERP;
+      v.driftY += (tdy - v.driftY) * SPRING_LERP;
+      if (Math.abs(v.driftX) < 0.01) v.driftX = 0;
+      if (Math.abs(v.driftY) < 0.01) v.driftY = 0;
     }
   }
 
@@ -133,7 +183,17 @@
     return lerpRGB(244, 63, 142, 34, 211, 238, t); // hot-pink → electric-blue
   }
 
-function drawGlow() {
+  function heatColor(dist, alpha, rz) {
+    const [br, bg, bb] = baseColor(rz);
+    if (dist >= MOUSE_RADIUS) return `rgba(${br},${bg},${bb},${alpha.toFixed(3)})`;
+    const t = 1 - dist / MOUSE_RADIUS;
+    const c = t < 0.5
+      ? lerpRGB(br, bg, bb, 255, 220,   0, t * 2)
+      : lerpRGB(255, 220, 0, 255,  50, 200, (t - 0.5) * 2);
+    return `rgba(${c[0]},${c[1]},${c[2]},${alpha.toFixed(3)})`;
+  }
+
+  function drawGlow() {
     const outerR = R * 1.55;
     const grad = ctx.createRadialGradient(cx, cy, R * 0.7, cx, cy, outerR);
     grad.addColorStop(0,    'rgba(110, 40, 200, 0.28)');
@@ -181,10 +241,9 @@ function drawGlow() {
       const px = v.projX + v.driftX;
       const py = v.projY + v.driftY;
 
-      const [br, bg, bb] = baseColor(v._rz);
       ctx.beginPath();
       ctx.arc(px, py, r, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(${br},${bg},${bb},${a.toFixed(3)})`;
+      ctx.fillStyle = heatColor(v._heatDist, a, v._rz);
       ctx.fill();
     }
   }
@@ -255,39 +314,58 @@ function drawGlow() {
 
 
   function tick() {
-    const moonDeployed = window.Moon.isDeployed();
-    if (moonDeployed) window.Moon.update();
-    const moon = moonDeployed ? window.Moon.getPos() : null;
+    window.Moon.update();
+    const moon = window.Moon.getPos();
 
     rotSpeed += (ROT_SPEED - rotSpeed) * SPIN_DECAY;
     rotY += rotSpeed;
     updateProjections();
-    updateSnap();
+    updateSprings();
     updateRipple();
     sortedVertices.sort((a, b) => a._rz - b._rz);
     const sorted = sortedVertices;
 
     ctx.clearRect(0, 0, W, H);
     drawGlow();
-    if (moonDeployed) window.Moon.drawOrbitRing();
+    window.Moon.drawOrbitRing();
 
-    if (moon && moon.mz > 0) {
+    if (!window.Moon.isDragging() && moon.mz > 0) {
+      // Moon is behind the globe — draw first so globe renders on top
       window.Moon.draw();
-      drawGlobeFrost(true);
+      drawGlobeFrost(true);   // back faces — beneath the mesh
       drawLines(sorted);
       drawDots(sorted);
-      drawGlobeFrost(false);
+      drawGlobeFrost(false);  // front faces — on top of the mesh
     } else {
-      drawGlobeFrost(true);
+      // Moon in front, or being dragged — always draw on top so it stays visible
+      drawGlobeFrost(true);   // back faces — beneath the mesh
       drawLines(sorted);
       drawDots(sorted);
-      drawGlobeFrost(false);
-      if (moon) window.Moon.draw();
+      drawGlobeFrost(false);  // front faces — on top of the mesh
+      window.Moon.draw();
     }
 
-    if (window.ElectricField && window.ElectricField.isActive()) window.ElectricField.draw(ctx);
-
     requestAnimationFrame(tick);
+  }
+
+  function canvasCoords(e, canvas) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: (e.clientX - rect.left) * (W / rect.width),
+      y: (e.clientY - rect.top)  * (H / rect.height),
+    };
+  }
+
+  function computeDragWeights(grabbed) {
+    for (let i = 0; i < vertices.length; i++) {
+      const v   = vertices[i];
+      const dot = (grabbed.x0 * v.x0 + grabbed.y0 * v.y0 + grabbed.z0 * v.z0) / (R * R);
+      const ang = Math.acos(Math.max(-1, Math.min(1, dot)));
+      v.dragWeight = ang < DRAG_ANGLE
+        ? Math.cos((ang / DRAG_ANGLE) * (Math.PI / 2)) ** 2
+        : 0;
+      v.snapping = false; // cancel any in-progress snap when re-grabbing
+    }
   }
 
   function init() {
@@ -296,6 +374,101 @@ function drawGlow() {
     ctx = canvas.getContext('2d');
     canvas.width  = W;
     canvas.height = H;
+
+    function updateCursor() {
+      if (dragVertex || window.Moon.isDragging()) return;
+      const overMoon  = window.Moon.isOver(mouseX, mouseY);
+      const overGlobe = Math.hypot(mouseX - cx, mouseY - cy) < R;
+      canvas.style.cursor = (overMoon || overGlobe) ? 'grab' : 'default';
+    }
+
+    const onRelease = () => {
+      if (!dragVertex) return;
+
+      const amp = Math.min(Math.hypot(dragVertex.driftX, dragVertex.driftY) * 0.5, 30);
+      ripple = { startTime: Date.now(), ox: dragVertex.x0, oy: dragVertex.y0, oz: dragVertex.z0, amp };
+
+      snapStartTime = Date.now();
+      for (let i = 0; i < vertices.length; i++) {
+        const v = vertices[i];
+        if (v.dragWeight > 0) {
+          v.snapping  = true;
+          v._snapDX0  = v.driftX;
+          v._snapDY0  = v.driftY;
+          v.dragWeight = 0;
+        }
+      }
+
+      const rawImpulse = dragVertex.driftX * IMPULSE_SCALE / R;
+      rotSpeed += Math.max(-0.05, Math.min(0.05, rawImpulse));
+
+      dragVertex = null;
+      if (!mouseInside) { mouseX = -9999; mouseY = -9999; }
+      updateCursor();
+    };
+
+    canvas.addEventListener('pointermove', e => {
+      if (e.buttons === 0 && dragVertex)             onRelease();
+      if (e.buttons === 0 && window.Moon.isDragging()) window.Moon.release();
+      const raw = canvasCoords(e, canvas);
+      // Clamp to canvas bounds: with setPointerCapture the finger can slide off
+      // the canvas edge, producing out-of-range coords that stretch grid lines
+      // to the canvas corners ("smear" artifact on mobile).
+      const x = Math.max(0, Math.min(W, raw.x));
+      const y = Math.max(0, Math.min(H, raw.y));
+
+      if (window.Moon.isDragging()) window.Moon.drag(x, y);
+
+      mouseX = x;
+      mouseY = y;
+      if (e.buttons === 0) updateCursor();
+    });
+
+    canvas.addEventListener('pointerenter', () => { mouseInside = true; });
+    canvas.addEventListener('pointerleave', () => {
+      mouseInside = false;
+      if (!dragVertex && !window.Moon.isDragging()) { mouseX = -9999; mouseY = -9999; }
+      canvas.style.cursor = 'default';
+      window.Moon.release();
+    });
+
+    canvas.addEventListener('pointerdown', e => {
+      const raw = canvasCoords(e, canvas);
+      const x = Math.max(0, Math.min(W, raw.x));
+      const y = Math.max(0, Math.min(H, raw.y));
+      // Sync position immediately so the first updateSprings() after pointerdown
+      // sees a correct ddx/ddy instead of the stale -9999 initial value, which
+      // would fling vertices off-canvas on the very first frame.
+      mouseX = x;
+      mouseY = y;
+      mouseInside = true;
+
+      // Moon grab takes priority — check it first
+      if (window.Moon.tryGrab(x, y)) {
+        canvas.style.cursor = 'grabbing';
+        canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+
+      // Otherwise try to grab a globe vertex.
+      // Use a larger radius for touch so a fingertip reliably hits something.
+      const effectiveGrabRadius = e.pointerType === 'touch' ? 50 : GRAB_RADIUS;
+      let nearest = null, bestDist = effectiveGrabRadius;
+      for (let i = 0; i < vertices.length; i++) {
+        const v = vertices[i];
+        if (v._rz >= 0) continue; // skip back hemisphere
+        const d = Math.hypot(x - v.projX, y - v.projY);
+        if (d < bestDist) { bestDist = d; nearest = v; }
+      }
+      if (nearest) {
+        dragVertex = nearest;
+        computeDragWeights(nearest);
+        canvas.style.cursor = 'grabbing';
+      }
+      canvas.setPointerCapture(e.pointerId);
+    });
+
+    window.addEventListener('pointerup', () => { onRelease(); window.Moon.release(); });
 
     window.addEventListener('blackhole-explode', e => {
       const { x: bhX, y: bhY } = e.detail;
@@ -323,6 +496,7 @@ function drawGlow() {
         v._snapDX0   = v.driftX;
         v._snapDY0   = v.driftY;
         v.snapping   = true;
+        v.dragWeight = 0;
       }
     });
 
@@ -348,6 +522,7 @@ function drawGlow() {
         v._snapDX0  = v.driftX;
         v._snapDY0  = v.driftY;
         v.snapping  = true;
+        v.dragWeight = 0;
         if (v._rz < 0) {
           const d = Math.hypot(v.projX - icx, v.projY - icy);
           if (d < bestDist) { bestDist = d; nearest = v; }

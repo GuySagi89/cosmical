@@ -5,7 +5,6 @@
   const canvas = document.getElementById('stars-canvas');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
-  const { rng, getGlobeBounds } = window.CosmicUtils;
 
   // Synthwave neon palette — each entry has hex + precomputed RGB + dark fill
   const NEON = [
@@ -19,17 +18,15 @@
 
   // Size tiers
   const TIERS = {
-    gigantic: { rMin: 95, rMax: 130, hp: 30, sMin: 22, sMax: 50, splits: 'large', splitN: [2,3] },
-    large:    { rMin: 54, rMax: 72,  hp: 10, sMin: 55, sMax: 110, splits: 'medium', splitN: 2    },
-    medium:   { rMin: 27, rMax: 41,  hp: 5,  sMin: 77, sMax: 136, splits: 'small',  splitN: [2,3] },
-    small:    { rMin: 13, rMax: 21,  hp: 1,  sMin: 111, sMax: 187, splits: null                   },
+    large:  { rMin: 54, rMax: 72, hp: 3, sMin: 22, sMax: 46, splits: 'medium', splitN: 2    },
+    medium: { rMin: 27, rMax: 41, hp: 2, sMin: 38, sMax: 68, splits: 'small',  splitN: [2,3] },
+    small:  { rMin: 13, rMax: 21, hp: 1, sMin: 58, sMax: 95, splits: null                   },
   };
 
   let asteroids = [];
   let fragments = [];
 
-  const MOBILE_MQ = window.matchMedia('(min-width: 600px) and (min-height: 600px)');
-  function sizeScale() { return MOBILE_MQ.matches ? 1 : 0.5; }
+  function rng(a, b) { return a + Math.random() * (b - a); }
 
   // ── 3D Polyhedron Library ─────────────────────────────────────────
   // Each shape: { verts: [[x,y,z], ...], edges: [[i,j], ...] }
@@ -105,10 +102,10 @@
     return { verts, edges: BASE_ICOSA_EDGES };
   }
 
-  function createAsteroid(x, y, tier, vx, vy, forceCi) {
+  function createAsteroid(x, y, tier, vx, vy) {
     const t  = TIERS[tier];
-    const r  = rng(t.rMin, t.rMax) * sizeScale();
-    const ci = forceCi ?? Math.floor(Math.random() * NEON.length);
+    const r  = rng(t.rMin, t.rMax);
+    const ci = Math.floor(Math.random() * NEON.length);
 
     let avx = vx, avy = vy;
     if (avx == null) {
@@ -121,8 +118,8 @@
     // Slower base spin since 3D rotation is more visually busy
     const rotDir = Math.random() < 0.5 ? 1 : -1;
     const rotSpd = rotDir * rng(
-      tier === 'gigantic' ? 0.03 : tier === 'large' ? 0.08 : tier === 'medium' ? 0.16 : 0.28,
-      tier === 'gigantic' ? 0.10 : tier === 'large' ? 0.22 : tier === 'medium' ? 0.40 : 0.62
+      tier === 'large' ? 0.08 : tier === 'medium' ? 0.16 : 0.28,
+      tier === 'large' ? 0.22 : tier === 'medium' ? 0.40 : 0.62
     );
 
     // Per-asteroid lumpiness so each rock has unique chunkiness
@@ -130,8 +127,8 @@
     const shape3D = makeRockShape(r, lumpiness);
     // Independent yaw/pitch/roll for proper 3D feel
     const eulerSpd = {
-      x: rng(-0.6, 0.6) * (tier === 'small' ? 1.6 : tier === 'medium' ? 1.2 : tier === 'large' ? 1.0 : 0.50),
-      y: rng(-0.6, 0.6) * (tier === 'small' ? 1.6 : tier === 'medium' ? 1.2 : tier === 'large' ? 1.0 : 0.50),
+      x: rng(-0.6, 0.6) * (tier === 'small' ? 1.6 : tier === 'medium' ? 1.2 : 1),
+      y: rng(-0.6, 0.6) * (tier === 'small' ? 1.6 : tier === 'medium' ? 1.2 : 1),
       z: rotSpd,
     };
 
@@ -155,11 +152,6 @@
       bounceCD: 0,
       swirl:    null,
       dead:     false,
-      frozen:   0,
-      frozenVx: 0,
-      frozenVy: 0,
-      thaw:     null,
-      burst:    null,
     };
   }
 
@@ -239,7 +231,7 @@
       asteroids.push(createAsteroid(
         a.x + Math.cos(ang) * off,
         a.y + Math.sin(ang) * off,
-        t.splits, vx, vy, a.ci
+        t.splits, vx, vy
       ));
     }
 
@@ -260,123 +252,9 @@
     return true;
   }
 
-  // ── Auto-spawner ──────────────────────────────────────────────────
-
-  let autoTimer    = rng(8, 15);
-  let pendingSpawns = []; // [{ delay, fn }] — queued individual spawns for barrages
-
-  function getGlobeCenter() {
-    const globeEl = document.getElementById('globe-canvas');
-    if (globeEl) {
-      const gr = globeEl.getBoundingClientRect();
-      return { x: gr.left + gr.width / 2, y: gr.top + gr.height / 2 };
-    }
-    return { x: canvas.width * 0.5, y: canvas.height * 0.5 };
-  }
-
-  // Spawn one asteroid from a given edge side (0=top,1=right,2=bottom,3=left)
-  function spawnOne(tier, side) {
-    const W = canvas.width, H = canvas.height;
-    let x, y;
-    if      (side === 0) { x = rng(W * 0.1, W * 0.9); y = -90; }
-    else if (side === 1) { x = W + 90;  y = rng(H * 0.1, H * 0.9); }
-    else if (side === 2) { x = rng(W * 0.1, W * 0.9); y = H + 90; }
-    else                 { x = -90;     y = rng(H * 0.1, H * 0.9); }
-    const gc = getGlobeCenter();
-    const t  = TIERS[tier];
-    const dx = gc.x - x + (Math.random() - 0.5) * 90;
-    const dy = gc.y - y + (Math.random() - 0.5) * 90;
-    const d  = Math.hypot(dx, dy) || 1;
-    const spd = rng(t.sMin, t.sMax);
-    asteroids.push(createAsteroid(x, y, tier, (dx / d) * spd, (dy / d) * spd));
-  }
-
-  // Spawn a side-by-side cluster from one edge
-  function spawnCluster(tier, count) {
-    const W = canvas.width, H = canvas.height;
-    const side = Math.floor(Math.random() * 4);
-    let baseX, baseY;
-    if      (side === 0) { baseX = rng(W * 0.15, W * 0.85); baseY = -90; }
-    else if (side === 1) { baseX = W + 90;  baseY = rng(H * 0.15, H * 0.85); }
-    else if (side === 2) { baseX = rng(W * 0.15, W * 0.85); baseY = H + 90; }
-    else                 { baseX = -90;     baseY = rng(H * 0.15, H * 0.85); }
-
-    const gc = getGlobeCenter();
-    const t  = TIERS[tier];
-    const aimX = gc.x + (Math.random() - 0.5) * 80;
-    const aimY = gc.y + (Math.random() - 0.5) * 80;
-    const tDx = aimX - baseX, tDy = aimY - baseY;
-    const tD  = Math.hypot(tDx, tDy) || 1;
-    const pnx = -tDy / tD, pny = tDx / tD; // perpendicular axis
-
-    const spacing = tier === 'gigantic' ? 300 : tier === 'large' ? 170 : tier === 'medium' ? 105 : 68;
-
-    for (let i = 0; i < count; i++) {
-      const offset = (i - (count - 1) / 2) * spacing;
-      const x = baseX + pnx * offset;
-      const y = baseY + pny * offset;
-      const indAimX = aimX + (Math.random() - 0.5) * 45;
-      const indAimY = aimY + (Math.random() - 0.5) * 45;
-      const dx = indAimX - x, dy = indAimY - y;
-      const d  = Math.hypot(dx, dy) || 1;
-      const spd = rng(t.sMin, t.sMax);
-      asteroids.push(createAsteroid(x, y, tier, (dx / d) * spd, (dy / d) * spd));
-    }
-  }
-
-  // Queue a rapid barrage of small asteroids, all from the same edge
-  function queueBarrage() {
-    const count = 10 + Math.floor(Math.random() * 6); // 10–15
-    const side  = Math.floor(Math.random() * 4);       // one side for the whole barrage
-    let delay = 0;
-    for (let i = 0; i < count; i++) {
-      delay += rng(0.18, 0.42);
-      const d = delay, s = side;
-      pendingSpawns.push({ delay: d, fn: () => { if (asteroids.length < (window.perfMode ? 8 : 22)) spawnOne('small', s); } });
-    }
-  }
-
-  function spawnWave() {
-    const hasGigantic = asteroids.some(a => a.tier === 'gigantic' && !a.dead);
-    // 8% chance of a solo gigantic, only if none already on screen
-    if (!hasGigantic && Math.random() < 0.08) {
-      spawnOne('gigantic', Math.floor(Math.random() * 4));
-      return;
-    }
-    if (Math.random() < 0.38) {
-      // Barrage: 10–15 small asteroids rapid-fired from one edge
-      queueBarrage();
-    } else {
-      // Cluster: 2+ asteroids side-by-side — only skip if very crowded
-      if (asteroids.length >= (window.perfMode ? 8 : 18)) return;
-      const tr = Math.random();
-      const tier = tr < 0.45 ? 'small' : tr < 0.75 ? 'medium' : 'large';
-      const count = tier === 'large' ? 2 + Math.floor(Math.random() * 2)
-                  : tier === 'medium' ? 2 + Math.floor(Math.random() * 3)
-                  : 3 + Math.floor(Math.random() * 3);
-      spawnCluster(tier, count);
-    }
-  }
-
   // ── Update ────────────────────────────────────────────────────────
 
   function update(dt) {
-    // Auto-spawn wave
-    autoTimer -= dt;
-    if (autoTimer <= 0) {
-      spawnWave();
-      autoTimer = rng(5, 10);
-    }
-
-    // Tick queued barrage spawns
-    for (let i = pendingSpawns.length - 1; i >= 0; i--) {
-      pendingSpawns[i].delay -= dt;
-      if (pendingSpawns[i].delay <= 0) {
-        pendingSpawns[i].fn();
-        pendingSpawns.splice(i, 1);
-      }
-    }
-
     // Update spark fragments
     for (let i = fragments.length - 1; i >= 0; i--) {
       const p = fragments[i];
@@ -388,8 +266,7 @@
       if (p.life <= 0) fragments.splice(i, 1);
     }
 
-    const g    = getGlobeBounds();
-    const moon = window.getMoonScreenPos ? window.getMoonScreenPos() : null;
+    const allBHs = window.BlackHole ? window.BlackHole.getAll() : [];
     const W = canvas.width, H = canvas.height;
 
     // Asteroid-asteroid collisions
@@ -432,99 +309,63 @@
       a.hitFlash = Math.max(0, a.hitFlash - dt);
       a.glowPh   = (a.glowPh + dt * 1.7) % (Math.PI * 2);
 
-      // BH swirl and gravity take priority over frozen state
+      // Advance 3D Euler angles
+      a.eulerX = (a.eulerX + a.eulerSpd.x * dt) % (Math.PI * 2);
+      a.eulerY = (a.eulerY + a.eulerSpd.y * dt) % (Math.PI * 2);
+      a.eulerZ = (a.eulerZ + a.eulerSpd.z * dt) % (Math.PI * 2);
+      a.rotation = a.eulerZ; // keep in sync for any external code that reads it
+
+      // BH swirl animation
       if (a.swirl) {
-        if (window.BlackHole.updateSwirl(a, dt)) a.dead = true;
-        continue;
-      }
-      if (window.BlackHole && window.BlackHole.applyGravity(a, dt, { swirlMaxAge: 2.5, gravityK: 1000000, minSwirlR: 6 })) continue;
-
-      if (a.frozen > 0) {
-        a.frozen = Math.max(0, a.frozen - dt);
-        if (a.frozen === 0) {
-          a.thaw = { age: 0, maxAge: 1.5, vx: a.frozenVx, vy: a.frozenVy };
-        }
-        if (a.bounceCD > 0) a.bounceCD -= dt;
-        const fship = window.Spaceship && window.Spaceship.get();
-        if (fship && !fship.exploding && !fship.swirl) {
-          const sdx = fship.x - a.x, sdy = fship.y - a.y;
-          const sd  = Math.hypot(sdx, sdy) || 1;
-          const minDist = a.r * 0.75 + 14;
-          if (sd < minDist) {
-            const nx = sdx / sd, ny = sdy / sd;
-            fship.x = a.x + nx * minDist;
-            fship.y = a.y + ny * minDist;
-            const relVn = fship.vx * nx + fship.vy * ny;
-            if (relVn < 0) { fship.vx -= relVn * nx * 1.5; fship.vy -= relVn * ny * 1.5; }
-            if (a.bounceCD <= 0) {
-              a.bounceCD = 0.6;
-              window.Spaceship.hit(fship.x, fship.y, a.frozenVx, a.frozenVy, 2);
-              damageAsteroid(i, 1, a.x, a.y);
-            }
-          }
-        }
+        const sw   = a.swirl;
+        sw.age    += dt;
+        if (sw.bh.age >= sw.bh.maxAge) { a.dead = true; continue; }
+        const frac = sw.age / sw.maxAge;
+        const r    = sw.r * Math.pow(1 - frac, 0.65);
+        const bhF  = sw.bh.age / sw.bh.maxAge;
+        const bhEv = Math.max(0, (bhF - 0.92) / 0.08);
+        const rs   = sw.bh.baseRadius * Math.max(0.05, 1 - bhEv * 0.9);
+        if (frac >= 1 || r <= rs) { a.dead = true; continue; }
+        sw.angle  += (3 + frac * 10) * dt;
+        a.x        = sw.bh.x + Math.cos(sw.angle) * r;
+        a.y        = sw.bh.y + Math.sin(sw.angle) * r;
         continue;
       }
 
-      // Spin and velocity ramp during thaw; full speed otherwise
-      let spinFrac = 1;
-      if (a.thaw) {
-        a.thaw.age += dt;
-        const tf = Math.min(1, a.thaw.age / a.thaw.maxAge);
-        spinFrac = tf;
-        a.vx = a.thaw.vx * tf;
-        a.vy = a.thaw.vy * tf;
-        if (tf >= 1) a.thaw = null;
+      // BH gravity pull
+      for (const bh of allBHs) {
+        const dx = bh.x - a.x, dy = bh.y - a.y;
+        const d  = Math.hypot(dx, dy);
+        if (d < bh.baseRadius * 8) {
+          a.swirl = { bh, angle: Math.atan2(a.y - bh.y, a.x - bh.x), r: Math.max(d, 6), age: 0, maxAge: 2.5 };
+          break;
+        }
+        if (d < bh.baseRadius * 30) {
+          const g = 1000000 / (d * d);
+          a.vx += (dx / d) * g * dt;
+          a.vy += (dy / d) * g * dt;
+        }
       }
-
-      // Decay the electric-field burst contribution back to zero
-      if (a.burst) {
-        const rate = dt / a.burst.maxAge;
-        a.vx -= a.burst.dvx * rate;
-        a.vy -= a.burst.dvy * rate;
-        a.burst.age += dt;
-        if (a.burst.age >= a.burst.maxAge) a.burst = null;
-      }
-
-      a.eulerX = (a.eulerX + a.eulerSpd.x * spinFrac * dt) % (Math.PI * 2);
-      a.eulerY = (a.eulerY + a.eulerSpd.y * spinFrac * dt) % (Math.PI * 2);
-      a.eulerZ = (a.eulerZ + a.eulerSpd.z * spinFrac * dt) % (Math.PI * 2);
-      a.rotation = a.eulerZ;
+      if (a.swirl) continue;
 
       a.x += a.vx * dt;
       a.y += a.vy * dt;
 
       if (a.bounceCD > 0) a.bounceCD -= dt;
 
-      // Shield collision
-      if (g && window.ElectricField && window.ElectricField.isActive() && a.bounceCD <= 0) {
-        const shieldR = g.r * window.ElectricField.SHIELD_FACTOR;
-        const sdx = a.x - g.x, sdy = a.y - g.y;
-        const sdist = Math.hypot(sdx, sdy);
-        if (sdist < shieldR + a.r * 0.75) {
-          const nx = sdx / (sdist || 1), ny = sdy / (sdist || 1);
-          a.x = g.x + nx * (shieldR + a.r * 0.75);
-          a.y = g.y + ny * (shieldR + a.r * 0.75);
-          const dot = a.vx * nx + a.vy * ny;
-          if (dot < 0) {
-            const BURST = 450;
-            a.vx = (a.vx - 2 * dot * nx) * 0.7 + nx * BURST;
-            a.vy = (a.vy - 2 * dot * ny) * 0.7 + ny * BURST;
-            a.burst = { dvx: nx * BURST, dvy: ny * BURST, age: 0, maxAge: 2.0 };
-          }
-          a.bounceCD = 0.5;
-          window.ElectricField.impact(a.x, a.y);
-        }
-      }
-
       // Globe collision
-      if (g) {
-        const bdx   = a.x - g.x, bdy = a.y - g.y;
-        const bdist = Math.hypot(bdx, bdy);
-        if (bdist < g.r + a.r * 0.75) {
+      const globeEl = document.getElementById('globe-canvas');
+      if (globeEl) {
+        const gr     = globeEl.getBoundingClientRect();
+        const gcx    = gr.left + gr.width  / 2;
+        const gcy    = gr.top  + gr.height / 2;
+        const globeR = gr.width * 0.22;
+        const bdx    = a.x - gcx, bdy = a.y - gcy;
+        const bdist  = Math.hypot(bdx, bdy);
+        if (bdist < globeR + a.r * 0.75) {
           const nx = bdx / (bdist || 1), ny = bdy / (bdist || 1);
-          a.x = g.x + nx * (g.r + a.r * 0.75);
-          a.y = g.y + ny * (g.r + a.r * 0.75);
+          a.x = gcx + nx * (globeR + a.r * 0.75);
+          a.y = gcy + ny * (globeR + a.r * 0.75);
           const dot = a.vx * nx + a.vy * ny;
           if (dot < 0) { a.vx = (a.vx - 2 * dot * nx) * 0.55; a.vy = (a.vy - 2 * dot * ny) * 0.55; }
           if (a.bounceCD <= 0) {
@@ -539,6 +380,7 @@
       }
 
       // Moon collision
+      const moon = window.getMoonScreenPos ? window.getMoonScreenPos() : null;
       if (moon) {
         const mdx   = a.x - moon.x, mdy = a.y - moon.y;
         const mdist = Math.hypot(mdx, mdy);
@@ -663,12 +505,11 @@
   function drawAsteroid(a) {
     if (a.dead) return;
 
-    const nc       = NEON[a.ci];
-    const glow     = 0.5 + Math.sin(a.glowPh) * 0.25;
-    const hitFrac  = Math.min(1, a.hitFlash / 0.22);
-    const swFrac   = a.swirl ? Math.max(0, 1 - Math.pow(a.swirl.age / a.swirl.maxAge, 0.55)) : 1;
-    const scale    = swFrac;
-    const isFrozen = a.frozen > 0;
+    const nc      = NEON[a.ci];
+    const glow    = 0.5 + Math.sin(a.glowPh) * 0.25;
+    const hitFrac = Math.min(1, a.hitFlash / 0.22);
+    const swFrac  = a.swirl ? Math.max(0, 1 - Math.pow(a.swirl.age / a.swirl.maxAge, 0.55)) : 1;
+    const scale   = swFrac;
 
     // Project all 3D vertices to 2D (local space, asteroid centered at origin)
     const verts3D = a.shape3D.verts;
@@ -693,32 +534,11 @@
     }
     ctx.closePath();
 
-    if (isFrozen) {
-      if (hitFrac > 0) {
-        const fr = Math.round(215 + (255 - 215) * hitFrac);
-        const fg = Math.round(245 + (255 - 245) * hitFrac);
-        ctx.fillStyle = `rgba(${fr},${fg},255,${0.72 + hitFrac * 0.28})`;
-      } else if (window.perfMode) {
-        ctx.fillStyle = 'rgba(120,195,235,0.75)';
-      } else {
-        const iceGrad = ctx.createRadialGradient(
-          -a.r * 0.20, -a.r * 0.25, 0,
-           a.r * 0.05,  a.r * 0.05, a.r * 1.10
-        );
-        iceGrad.addColorStop(0,    'rgba(215, 245, 255, 0.82)');
-        iceGrad.addColorStop(0.45, 'rgba(120, 195, 235, 0.70)');
-        iceGrad.addColorStop(1,    'rgba(20,  70, 120, 0.88)');
-        ctx.fillStyle = iceGrad;
-      }
-      ctx.fill();
-    } else if (hitFrac > 0) {
+    if (hitFrac > 0) {
       const fr = Math.round(nc.r + (255 - nc.r) * hitFrac);
       const fg = Math.round(nc.g + (255 - nc.g) * hitFrac);
       const fb = Math.round(nc.b + (255 - nc.b) * hitFrac);
       ctx.fillStyle = `rgba(${fr},${fg},${fb},${0.45 + hitFrac * 0.40})`;
-      ctx.fill();
-    } else if (window.perfMode) {
-      ctx.fillStyle = nc.fill;
       ctx.fill();
     } else {
       // Subtle radial fill: dark center, slightly lit on one side
@@ -760,9 +580,9 @@
     }
 
     // Per-tier sizing
-    const lwHull = a.tier === 'gigantic' ? 3.0 : a.tier === 'large' ? 2.0 : a.tier === 'medium' ? 1.6 : 1.3;
-    const lwIn   = a.tier === 'gigantic' ? 1.6 : a.tier === 'large' ? 1.1 : a.tier === 'medium' ? 0.9 : 0.8;
-    const baseGlow = (a.tier === 'gigantic' ? 26 : a.tier === 'large' ? 14 : a.tier === 'medium' ? 10 : 7) * (0.7 + glow * 0.6);
+    const lwHull = a.tier === 'large' ? 2.0 : a.tier === 'medium' ? 1.6 : 1.3;
+    const lwIn   = a.tier === 'large' ? 1.1 : a.tier === 'medium' ? 0.9 : 0.8;
+    const baseGlow = (a.tier === 'large' ? 14 : a.tier === 'medium' ? 10 : 7) * (0.7 + glow * 0.6);
 
     let zMin = Infinity, zMax = -Infinity;
     for (const v of a.projected) {
@@ -777,29 +597,27 @@
       const depth = (e.avgZ - zMin) / zRange; // 0 = back, 1 = front
       const key = e.ia < e.ib ? `${e.ia}-${e.ib}` : `${e.ib}-${e.ia}`;
       const isSilhouette = hullEdges.has(key);
-      if (window.perfMode && !isSilhouette) continue;
       const isFront = depth > 0.45;
 
       let alpha, lw, glw;
       if (isSilhouette) {
         alpha = 1;
         lw    = lwHull;
-        glw   = window.perfMode ? 0 : baseGlow + hitFrac * 22;
+        glw   = baseGlow + hitFrac * 22;
       } else if (isFront) {
         alpha = 0.70;
         lw    = lwIn;
-        glw   = window.perfMode ? 0 : 4;
+        glw   = 4;
       } else {
         alpha = 0.30 + depth * 0.25;
         lw    = lwIn;
         glw   = 0;
       }
 
-      const edgeHex   = isFrozen ? '#c8ebff' : nc.hex;
-      ctx.shadowColor = edgeHex;
+      ctx.shadowColor = nc.hex;
       ctx.shadowBlur  = glw;
       ctx.globalAlpha = alpha;
-      ctx.strokeStyle = hitFrac > 0.55 ? '#ffffff' : edgeHex;
+      ctx.strokeStyle = hitFrac > 0.55 ? '#ffffff' : nc.hex;
       ctx.lineWidth   = lw + hitFrac * 1.2;
       ctx.lineCap     = 'round';
       ctx.beginPath();
@@ -810,25 +628,6 @@
 
     ctx.shadowBlur  = 0;
     ctx.globalAlpha = 1;
-
-    // Frost shimmer rings when frozen
-    if (isFrozen && !window.perfMode) {
-      const shimmer = 0.20 + Math.sin(a.glowPh * 2.8) * 0.08;
-      ctx.save();
-      ctx.strokeStyle = 'rgba(210, 248, 255, 0.85)';
-      ctx.lineWidth   = 0.7;
-      ctx.shadowColor = 'rgba(180, 235, 255, 1)';
-      ctx.shadowBlur  = 7;
-      for (let k = 0; k < 3; k++) {
-        const kr = a.r * (0.28 + k * 0.24);
-        ctx.globalAlpha = shimmer * (1 - k * 0.28);
-        ctx.beginPath();
-        ctx.arc(0, 0, kr, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-      ctx.restore();
-    }
-
     ctx.restore();
 
   }
@@ -876,29 +675,7 @@
     draw,
     spawnAt(x, y, tier) { asteroids.push(createAsteroid(x, y, tier || 'large')); },
     checkHit,
-    touchAny(x, y, r) {
-      for (const a of asteroids) {
-        if (a.dead || a.swirl) continue;
-        if (Math.hypot(x - a.x, y - a.y) < a.r + r) return true;
-      }
-      return false;
-    },
     getAll: () => asteroids,
-    freezeInRadius(cx, cy, r) {
-      for (const a of asteroids) {
-        if (a.dead || a.swirl || a.frozen > 0) continue;
-        if (Math.hypot(a.x - cx, a.y - cy) <= r + a.r) {
-          a.frozenVx = a.vx;
-          a.frozenVy = a.vy;
-          a.frozen   = 7.0;
-          a.hitFlash = 0;
-          a.thaw     = null;
-          a.burst    = null;
-          a.vx = 0;
-          a.vy = 0;
-        }
-      }
-    },
     bhExplode(cx, cy, pullR) {
       for (let i = asteroids.length - 1; i >= 0; i--) {
         const a = asteroids[i];

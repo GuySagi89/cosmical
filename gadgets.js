@@ -12,6 +12,7 @@
   let trailRafId        = null;
   let dragPath          = [];
   let isDragging             = false;
+  let spaceshipTouchPending  = false;
   let activePointerId        = null;
   let lastPointerType        = 'mouse';
   let dragStartX        = 0;
@@ -20,44 +21,14 @@
   let meteorDragHistory = [];
   let throwParticles    = [];
   let lastTrailTime     = null;
-  let lastMouseX        = 0;
-  let lastMouseY        = 0;
-  let corsairFlashTimer = null;
 
-  const CORSAIR_SVG = '<svg viewBox="-24 -24 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><circle r="20" stroke="#00f5ff" stroke-width="0.8" opacity="0.55"/><line x1="0" y1="-20" x2="0" y2="-9" stroke="#00f5ff" stroke-width="0.8" stroke-linecap="round" opacity="0.5"/><line x1="0" y1="9" x2="0" y2="20" stroke="#00f5ff" stroke-width="0.8" stroke-linecap="round" opacity="0.5"/><line x1="-20" y1="0" x2="-9" y2="0" stroke="#00f5ff" stroke-width="0.8" stroke-linecap="round" opacity="0.5"/><line x1="9" y1="0" x2="20" y2="0" stroke="#00f5ff" stroke-width="0.8" stroke-linecap="round" opacity="0.5"/><path d="M-20,-11 L-20,-20 L-11,-20" stroke="#00f5ff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M11,-20 L20,-20 L20,-11" stroke="#00f5ff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M20,11 L20,20 L11,20" stroke="#00f5ff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M-11,20 L-20,20 L-20,11" stroke="#00f5ff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><circle r="7" stroke="#ff00bb" stroke-width="1.2"><animate attributeName="opacity" values="1;0.3;1" dur="2.2s" repeatCount="indefinite"/></circle><circle r="1.8" fill="#ff00bb"><animate attributeName="opacity" values="0.9;0.4;0.9" dur="2.2s" repeatCount="indefinite"/></circle></svg>';
+  const SHIP_SVG     = '<svg class="gadget-cursor-ship-svg" viewBox="-13 -16 26 30" fill="none" xmlns="http://www.w3.org/2000/svg"><polygon points="0,-15 -12,7 -5,2 0,11 5,2 12,7" fill="#6848b8" fill-opacity="0.93" stroke="#c0a8ff" stroke-width="1.3" stroke-linejoin="round"/><ellipse cx="0" cy="-6" rx="2.5" ry="4.5" fill="#98dcff" fill-opacity="0.90" stroke="#c8eeff" stroke-width="0.7" stroke-opacity="0.55"/></svg>';
+  const ASTEROID_SVG = '<svg class="gadget-cursor-asteroid-svg" viewBox="-20 -20 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"><polygon points="0,-18 10,-13 17,-4 15,9 6,17 -7,16 -16,7 -15,-6 -8,-16" fill="rgba(0,28,32,0.85)" stroke="#00f5ff" stroke-width="1.6" stroke-linejoin="round"/><circle cx="3" cy="-4" r="2.5" fill="rgba(0,245,255,0.12)" stroke="#00f5ff" stroke-width="0.8"/></svg>';
 
   function moveCursor(x, y) {
     if (!cursorEl) return;
     cursorEl.style.left = x + 'px';
     cursorEl.style.top  = y + 'px';
-  }
-
-  const corsairEl = document.createElement('div');
-  corsairEl.id = 'corsair-cursor';
-  corsairEl.innerHTML = CORSAIR_SVG;
-  for (let i = 0; i < 3; i++) {
-    const ring = document.createElement('div');
-    ring.className = 'ship-beacon-ring';
-    ring.style.animationDelay = (i * 0.53) + 's';
-    corsairEl.appendChild(ring);
-  }
-  document.body.appendChild(corsairEl);
-
-  function updateCorsairVisibility(x, y) {
-    if (lastPointerType !== 'mouse') return;
-    if (activeGadget) { corsairEl.style.opacity = '0'; return; }
-    const over   = document.elementFromPoint(x, y);
-    const overUI = inventory.contains(over) || !!(over && over.closest('#perf-toggle')) || !!(over && over.closest('#mobile-toggle'));
-    if (window.mobileControlMode) {
-      if (overUI) {
-        corsairEl.style.opacity = '0';
-      } else {
-        corsairEl.classList.add('ship-drag');
-        corsairEl.style.opacity = '1';
-      }
-      return;
-    }
-    corsairEl.style.opacity = overUI ? '0' : '1';
   }
 
   const TRAIL_MS = 200;
@@ -180,6 +151,26 @@
     if (Math.hypot(cx - last.x, cy - last.y) > 2) {
       dragPath.push({ x: cx, y: cy, t: performance.now() });
     }
+    const dx = cx - dragStartX, dy = cy - dragStartY;
+    if (activeGadget === 'comet' && window.smokeParticles && window.smokeParticles.length < 600) {
+      const len = Math.hypot(dx, dy) || 1;
+      const bx  = -dx / len, by = -dy / len;
+      for (let j = 0; j < 8; j++) {
+        const spread = (Math.random() - 0.5) * 1.1;
+        const cs = Math.cos(spread), ss = Math.sin(spread);
+        window.smokeParticles.push({
+          x: cx + (Math.random() - 0.5) * 6,
+          y: cy + (Math.random() - 0.5) * 6,
+          vx: (bx * cs - by * ss) * (25 + Math.random() * 45),
+          vy: (bx * ss + by * cs) * (25 + Math.random() * 45),
+          life: 0.35 + Math.random() * 0.3,
+          maxLife: 0.55,
+          r: 2.5 + Math.random() * 3.5,
+          core: Math.random() < 0.4,
+          comet: true,
+        });
+      }
+    }
   }
 
   function hideDragFeedback() {
@@ -195,6 +186,11 @@
   function setActiveGadget(type) {
     if (isDragging) {
       isDragging = false;
+      spaceshipTouchPending = false;
+      if (activeGadget === 'spaceship') {
+        if (cursorEl) cursorEl.classList.remove('pressing');
+        window.releaseSpaceship && window.releaseSpaceship();
+      }
       hideDragFeedback();
     }
 
@@ -203,24 +199,17 @@
     inventory.querySelectorAll('.gadget-slot').forEach(s => {
       s.classList.toggle('active', s.dataset.gadget === activeGadget);
     });
-updateCorsairVisibility(lastMouseX, lastMouseY);
 
     if (cursorEl) { cursorEl.remove(); cursorEl = null; }
     if (activeGadget) {
       cursorEl = document.createElement('div');
       cursorEl.className = `gadget-cursor gadget-cursor--${activeGadget}`;
-      if (activeGadget === 'blackhole' || activeGadget === 'meteor-shower' || activeGadget === 'comet' || activeGadget === 'electric-field') {
+      if (activeGadget === 'spaceship') cursorEl.innerHTML = SHIP_SVG;
+      if (activeGadget === 'asteroid')  cursorEl.innerHTML = ASTEROID_SVG;
+      if (activeGadget === 'meteor-shower') {
         const ring = document.createElement('div');
         ring.className = 'cooldown-ring';
         cursorEl.appendChild(ring);
-      }
-      if (activeGadget === 'electric-field') {
-        const srcIcon = document.querySelector('#gadget-electric-field .gadget-electric-field-icon');
-        if (srcIcon) cursorEl.appendChild(srcIcon.cloneNode(true));
-      }
-      if (activeGadget === 'blackhole') {
-        const srcIcon = document.querySelector('#gadget-blackhole .gadget-blackhole-icon');
-        if (srcIcon) cursorEl.appendChild(srcIcon.cloneNode(true));
       }
       cursorEl.style.left = '-100px';
       cursorEl.style.top  = '-100px';
@@ -242,36 +231,11 @@ updateCorsairVisibility(lastMouseX, lastMouseY);
   }
 
   // Track last real pointer type to avoid treating compat mouse events as genuine mouse input
-  document.addEventListener('pointerdown', e => {
-    lastPointerType = e.pointerType;
-    if (e.pointerType !== 'mouse') {
-      const over   = document.elementFromPoint(e.clientX, e.clientY);
-      const overUI = inventory.contains(over) || !!(over && over.closest('#perf-toggle')) || !!(over && over.closest('#mobile-toggle'));
-      if (!overUI) {
-        corsairEl.style.left = e.clientX + 'px';
-        corsairEl.style.top  = e.clientY + 'px';
-        corsairEl.style.opacity = '1';
-        clearTimeout(corsairFlashTimer);
-        corsairFlashTimer = setTimeout(() => { corsairEl.style.opacity = '0'; }, 280);
-      }
-    }
-  }, { capture: true });
+  document.addEventListener('pointerdown', e => { lastPointerType = e.pointerType; }, { capture: true });
 
   // Track cursor even when pointer is over inventory (above the overlay)
   document.addEventListener('pointermove', e => {
-    if (e.pointerType === 'mouse') {
-      lastMouseX = e.clientX;
-      lastMouseY = e.clientY;
-      corsairEl.style.left = e.clientX + 'px';
-      corsairEl.style.top  = e.clientY + 'px';
-    }
-
-    if (!cursorEl) {
-      if (e.pointerType === 'mouse' && lastPointerType === 'mouse') {
-        updateCorsairVisibility(e.clientX, e.clientY);
-      }
-      return;
-    }
+    if (!cursorEl) return;
     // Only move cursor for the active tracked pointer or any mouse
     if (e.pointerType === 'mouse' || e.pointerId === activePointerId || activePointerId === null) {
       moveCursor(e.clientX, e.clientY);
@@ -282,17 +246,18 @@ updateCorsairVisibility(lastMouseX, lastMouseY);
       isDragging = false;
       activePointerId = null;
       hideDragFeedback();
+      if (activeGadget === 'spaceship') {
+        if (cursorEl) cursorEl.classList.remove('pressing');
+        window.releaseSpaceship && window.releaseSpaceship();
+      }
     }
 
     if (e.pointerType !== 'mouse') return;
     if (lastPointerType !== 'mouse') return; // ignore compat mouse events that follow a touch
     const over = document.elementFromPoint(e.clientX, e.clientY);
-    cursorEl.style.opacity = (over && (inventory.contains(over) || over.closest('#perf-toggle') || over.closest('#mobile-toggle'))) ? '0'
+    cursorEl.style.opacity = (over && inventory.contains(over)) ? '0'
       : cursorEl.classList.contains('on-cooldown') ? '0.52' : '1';
-    updateCorsairVisibility(e.clientX, e.clientY);
   }, { capture: true });
-
-  document.addEventListener('mouseleave', () => { corsairEl.style.opacity = '0'; });
 
   function onDown(e) {
     if (e.button !== 0) return;
@@ -300,53 +265,75 @@ updateCorsairVisibility(lastMouseX, lastMouseY);
     activePointerId = e.pointerId;
     if (e.pointerType !== 'mouse' && cursorEl) {
       moveCursor(e.clientX, e.clientY);
-      if (!(activeGadget === 'spaceship' && e.pointerType === 'touch')) {
-        cursorEl.style.opacity = '1';
-      }
+      cursorEl.style.opacity = '1';
     }
     isDragging = true;
     dragStartX = e.clientX;
     dragStartY = e.clientY;
 
     if (activeGadget === 'blackhole') {
-      if (!window.BlackHole || window.BlackHole.isReady()) {
-        window.spawnBlackHole && window.spawnBlackHole(e.clientX, e.clientY);
-        isDragging = false;
-        setActiveGadget('blackhole');
-        e.stopPropagation();
+      window.spawnBlackHole && window.spawnBlackHole(e.clientX, e.clientY);
+      isDragging = false;
+    } else if (activeGadget === 'asteroid') {
+      window.Asteroids && window.Asteroids.spawnAt(e.clientX, e.clientY);
+      isDragging = false;
+    } else if (activeGadget === 'spaceship') {
+      if (e.pointerType === 'touch') {
+        spaceshipTouchPending = true;
       } else {
-        isDragging = false;
-        e.stopPropagation();
+        window.startSpaceship && window.startSpaceship(e.clientX, e.clientY);
+        if (cursorEl) cursorEl.classList.add('pressing');
+        overlay.setPointerCapture(e.pointerId);
       }
     } else if (activeGadget === 'comet') {
-      if (window.spawnComet && (!window.Comet || window.Comet.isReady())) {
-        window.spawnComet(e.clientX, e.clientY, 0, 500);
-      }
-      isDragging = false;
-      setActiveGadget('comet');
-      e.stopPropagation();
+      cometDragHistory = [{ x: e.clientX, y: e.clientY, t: performance.now() }];
+      showDragOrigin(dragStartX, dragStartY, 'comet');
+      overlay.setPointerCapture(e.pointerId);
     } else if (activeGadget === 'meteor-shower') {
-      if (window.spawnMeteorShower && (!window.MeteorShower || window.MeteorShower.isReady())) {
-        window.spawnMeteorShower(e.clientX, e.clientY, 0, 500);
+      meteorDragHistory = [{ x: e.clientX, y: e.clientY, t: performance.now() }];
+      overlay.setPointerCapture(e.pointerId);
+      if (!window.MeteorShower || window.MeteorShower.isReady()) {
+        showDragOrigin(dragStartX, dragStartY, 'meteor-shower');
       }
-      isDragging = false;
-      setActiveGadget('meteor-shower');
-      e.stopPropagation();
-    } else if (activeGadget === 'electric-field') {
-      if (!window.ElectricField || window.ElectricField.isReady()) {
-        window.spawnElectricField && window.spawnElectricField();
-      }
-      isDragging = false;
-      setActiveGadget('electric-field');
-      e.stopPropagation();
     }
   }
 
   function onMove(e) {
     if (activePointerId !== null && e.pointerId !== activePointerId) return;
     moveCursor(e.clientX, e.clientY);
+    if (activeGadget === 'spaceship' && e.pointerType === 'mouse') {
+      const ship = window.Spaceship && window.Spaceship.get();
+      if (ship && !ship.exploding && !ship.swirl) {
+        ship._aimX = e.clientX;
+        ship._aimY = e.clientY;
+      }
+    }
     if (!isDragging) return;
 
+    if (activeGadget === 'spaceship') {
+      if (spaceshipTouchPending) {
+        if (Math.hypot(e.clientX - dragStartX, e.clientY - dragStartY) > 12) {
+          spaceshipTouchPending = false;
+          window.startSpaceship && window.startSpaceship(dragStartX, dragStartY);
+          if (cursorEl) cursorEl.classList.add('pressing');
+          overlay.setPointerCapture(e.pointerId);
+          window.updateSpaceshipTarget && window.updateSpaceshipTarget(e.clientX, e.clientY);
+        }
+      } else {
+        window.updateSpaceshipTarget && window.updateSpaceshipTarget(e.clientX, e.clientY);
+      }
+    } else if (activeGadget === 'comet') {
+      cometDragHistory.push({ x: e.clientX, y: e.clientY, t: performance.now() });
+      if (cometDragHistory.length > 10) cometDragHistory.shift();
+      updateDragFeedback(e.clientX, e.clientY);
+    } else if (activeGadget === 'meteor-shower') {
+      meteorDragHistory.push({ x: e.clientX, y: e.clientY, t: performance.now() });
+      if (meteorDragHistory.length > 10) meteorDragHistory.shift();
+      if (!svgEl && window.MeteorShower && window.MeteorShower.isReady()) {
+        showDragOrigin(e.clientX, e.clientY, 'meteor-shower');
+      }
+      updateDragFeedback(e.clientX, e.clientY);
+    }
   }
 
   function onUp(e) {
@@ -356,16 +343,79 @@ updateCorsairVisibility(lastMouseX, lastMouseY);
     if (e.pointerType !== 'mouse' && cursorEl) cursorEl.style.opacity = '0';
     if (!isDragging) return;
     isDragging = false;
-    hideDragFeedback();
+    // Trail gadgets: let animateTrail age the path out naturally; others: clean up now
+    if (activeGadget === 'comet' || activeGadget === 'meteor-shower') {
+      if (cursorEl) cursorEl.style.transform = 'translate(-50%, -50%)';
+    } else {
+      hideDragFeedback();
+    }
+
+    if (activeGadget === 'spaceship') {
+      if (spaceshipTouchPending) {
+        spaceshipTouchPending = false;
+        window.fireSpaceshipLaser && window.fireSpaceshipLaser(e.clientX, e.clientY);
+      } else {
+        if (cursorEl) cursorEl.classList.remove('pressing');
+        window.releaseSpaceship && window.releaseSpaceship();
+      }
+    } else if (activeGadget === 'comet' && window.spawnComet) {
+      const now    = performance.now();
+      const recent = cometDragHistory.filter(p => now - p.t < 100);
+      let vx = 0, vy = 0;
+      if (recent.length >= 2) {
+        const first = recent[0], last = recent[recent.length - 1];
+        const dtSec = (last.t - first.t) / 1000;
+        if (dtSec > 0.005) { vx = (last.x - first.x) / dtSec; vy = (last.y - first.y) / dtSec; }
+      }
+      if (Math.hypot(vx, vy) < 50) {
+        const dx = e.clientX - dragStartX, dy = e.clientY - dragStartY;
+        const len = Math.hypot(dx, dy);
+        if (len > 5) {
+          const spd = Math.min(len * 3.5, 900);
+          vx = (dx / len) * spd; vy = (dy / len) * spd;
+        } else {
+          vx = 0; vy = -500;
+        }
+      } else {
+        const spd = Math.hypot(vx, vy);
+        if (spd > 1200) { vx = vx / spd * 1200; vy = vy / spd * 1200; }
+      }
+      window.spawnComet(e.clientX, e.clientY, vx, vy);
+      spawnThrowParticles(e.clientX, e.clientY, 'comet');
+    } else if (activeGadget === 'meteor-shower' && window.spawnMeteorShower) {
+      const now    = performance.now();
+      const recent = meteorDragHistory.filter(p => now - p.t < 100);
+      let dx = 0, dy = 0;
+      if (recent.length >= 2) {
+        const first = recent[0], last = recent[recent.length - 1];
+        const dtSec = (last.t - first.t) / 1000;
+        if (dtSec > 0.005) { dx = (last.x - first.x) / dtSec; dy = (last.y - first.y) / dtSec; }
+      }
+      if (Math.hypot(dx, dy) < 50) {
+        dx = e.clientX - dragStartX;
+        dy = e.clientY - dragStartY;
+      }
+      if (Math.hypot(dx, dy) > 15) {
+        window.spawnMeteorShower(e.clientX, e.clientY, dx, dy);
+      } else {
+        window.spawnMeteorShower(e.clientX, e.clientY, 0, 500);
+      }
+      spawnThrowParticles(e.clientX, e.clientY, 'meteor-shower');
+    }
   }
 
   function onCancel(e) {
     if (activePointerId !== null && e.pointerId !== activePointerId) return;
     activePointerId = null;
     if (e.pointerType !== 'mouse' && cursorEl) cursorEl.style.opacity = '0';
+    spaceshipTouchPending = false;
     if (!isDragging) return;
     isDragging = false;
     hideDragFeedback();
+    if (activeGadget === 'spaceship') {
+      if (cursorEl) cursorEl.classList.remove('pressing');
+      window.releaseSpaceship && window.releaseSpaceship();
+    }
   }
 
   inventory.querySelectorAll('.gadget-slot').forEach(slot => {
@@ -393,25 +443,16 @@ updateCorsairVisibility(lastMouseX, lastMouseY);
 
     slot.addEventListener('click', e => {
       e.stopPropagation();
-      if (!slot.classList.contains('on-cooldown')) setActiveGadget(slot.dataset.gadget);
+      setActiveGadget(slot.dataset.gadget);
     });
   });
 
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && activeGadget) { setActiveGadget(activeGadget); return; }
-    const num = parseInt(e.key, 10);
-    if (num >= 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      const slots = Array.from(inventory.querySelectorAll('.gadget-slot'));
-      const slot  = slots[num - 1];
-      if (!slot) return;
-      if (!slot.classList.contains('on-cooldown')) {
-        setActiveGadget(slot.dataset.gadget);
-      }
-    }
+    if (e.key === 'Escape' && activeGadget) setActiveGadget(activeGadget);
   });
 
   document.addEventListener('contextmenu', e => {
-    if (!activeGadget) {
+    if (activeGadget === 'spaceship') {
       e.preventDefault();
       window.fireSpaceshipLaser && window.fireSpaceshipLaser(e.clientX, e.clientY);
     }
@@ -420,120 +461,4 @@ updateCorsairVisibility(lastMouseX, lastMouseY);
   // Fallback: catch pointer release even when the overlay loses capture (e.g. after contextmenu)
   window.addEventListener('pointerup',     onUp);
   window.addEventListener('pointercancel', onCancel);
-
-  // ── Direct spaceship control (always-on, below any gadget overlay) ──────────
-  {
-    let pendingPointerId = null;
-    let pendingStartX    = 0, pendingStartY = 0;
-    let pendingIsDrag    = false;
-
-    function showBeacon() {
-      corsairEl.classList.add('ship-drag');
-      corsairEl.style.opacity = '1';
-    }
-
-    function hideBeacon() {
-      if (window.mobileControlMode) return;
-      corsairEl.classList.remove('ship-drag');
-      corsairEl.style.opacity = '';
-      updateCorsairVisibility(lastMouseX, lastMouseY);
-    }
-
-    document.body.addEventListener('pointerdown', e => {
-      if (e.button !== 0 && e.pointerType === 'mouse') return;
-      if (activeGadget) return;
-      if (inventory.contains(e.target)) return;
-      if (e.target.closest('#perf-toggle') || e.target.closest('#mobile-toggle')) return;
-      pendingPointerId = e.pointerId;
-      pendingStartX    = e.clientX;
-      pendingStartY    = e.clientY;
-      pendingIsDrag    = (e.pointerType !== 'touch') && !window.mobileControlMode;
-      if (pendingIsDrag) {
-        window.startSpaceship && window.startSpaceship(e.clientX, e.clientY);
-        showBeacon();
-      }
-    });
-
-    document.body.addEventListener('pointermove', e => {
-      if (!activeGadget && e.pointerType === 'mouse') {
-        const ship = window.Spaceship && window.Spaceship.get();
-        if (ship && !ship.exploding) { ship._aimX = e.clientX; ship._aimY = e.clientY; }
-      }
-      if (e.pointerId !== pendingPointerId || activeGadget) return;
-      if (!pendingIsDrag && Math.hypot(e.clientX - pendingStartX, e.clientY - pendingStartY) > 12) {
-        pendingIsDrag = true;
-        window.startSpaceship && window.startSpaceship(pendingStartX, pendingStartY);
-        showBeacon();
-      }
-      if (pendingIsDrag) {
-        corsairEl.style.left = e.clientX + 'px';
-        corsairEl.style.top  = e.clientY + 'px';
-        window.updateSpaceshipTarget && window.updateSpaceshipTarget(e.clientX, e.clientY);
-      }
-    });
-
-    const endShipControl = e => {
-      if (e.pointerId !== pendingPointerId) return;
-      const wasDrag = pendingIsDrag;
-      pendingPointerId = null;
-      pendingIsDrag    = false;
-      hideBeacon();
-      if (activeGadget) return;
-      if (wasDrag) window.releaseSpaceship && window.releaseSpaceship();
-      else if (e.type === 'pointerup' && (e.pointerType === 'touch' || (e.pointerType === 'mouse' && window.mobileControlMode))) {
-        if (e.pointerType === 'mouse' && window.mobileControlMode) {
-          corsairEl.classList.remove('ship-drag');
-          clearTimeout(corsairFlashTimer);
-          corsairFlashTimer = setTimeout(() => {
-            if (window.mobileControlMode) corsairEl.classList.add('ship-drag');
-          }, 280);
-        } else {
-          corsairEl.style.left = e.clientX + 'px';
-          corsairEl.style.top  = e.clientY + 'px';
-          corsairEl.style.opacity = '1';
-          clearTimeout(corsairFlashTimer);
-          corsairFlashTimer = setTimeout(() => { corsairEl.style.opacity = '0'; }, 280);
-        }
-        window.fireSpaceshipLaser && window.fireSpaceshipLaser(e.clientX, e.clientY);
-      }
-    };
-    document.body.addEventListener('pointerup',     endShipControl);
-    document.body.addEventListener('pointercancel', endShipControl);
-  }
-
-  // ── Performance mode toggle ───────────────────────────────────────
-  const perfToggle = document.getElementById('perf-toggle');
-  if (perfToggle) {
-    window.perfMode = localStorage.getItem('perfMode') === '1';
-    perfToggle.classList.toggle('active', window.perfMode);
-    perfToggle.addEventListener('click', () => {
-      window.perfMode = !window.perfMode;
-      localStorage.setItem('perfMode', window.perfMode ? '1' : '0');
-      perfToggle.classList.toggle('active', window.perfMode);
-    });
-  }
-
-  // ── Mobile control mode toggle ────────────────────────────────────
-  const mobileToggle = document.getElementById('mobile-toggle');
-  if (mobileToggle) {
-    window.mobileControlMode = localStorage.getItem('mobileControlMode') === '1';
-    mobileToggle.classList.toggle('active', window.mobileControlMode);
-    if (window.mobileControlMode) {
-      corsairEl.classList.add('ship-drag');
-      updateCorsairVisibility(lastMouseX, lastMouseY);
-    }
-    mobileToggle.addEventListener('click', () => {
-      window.mobileControlMode = !window.mobileControlMode;
-      localStorage.setItem('mobileControlMode', window.mobileControlMode ? '1' : '0');
-      mobileToggle.classList.toggle('active', window.mobileControlMode);
-      clearTimeout(corsairFlashTimer);
-      if (window.mobileControlMode) {
-        corsairEl.classList.add('ship-drag');
-      } else {
-        corsairEl.classList.remove('ship-drag');
-        corsairEl.style.opacity = '';
-      }
-      updateCorsairVisibility(lastMouseX, lastMouseY);
-    });
-  }
 })();

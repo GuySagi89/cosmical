@@ -315,30 +315,23 @@
       const frac  = 1 - p.life / p.maxLife;
       const alpha = (p.life / p.maxLife) * (p.core ? 0.78 : 0.48);
       const r     = Math.max(0.01, p.r * (1 + frac * 2.8));
+      const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
+      if (p.comet) {
+        g.addColorStop(0,   `rgba(180, 240, 255, ${alpha})`);
+        g.addColorStop(0.4, `rgba(80,  180, 255, ${alpha * 0.45})`);
+        g.addColorStop(1,   'rgba(20, 80, 200, 0)');
+      } else if (p.core) {
+        g.addColorStop(0,    `rgba(218, 198, 255, ${alpha})`);
+        g.addColorStop(0.35, `rgba(158, 112, 255, ${alpha * 0.50})`);
+        g.addColorStop(1,    'rgba(88, 48, 200, 0)');
+      } else {
+        g.addColorStop(0,    `rgba(128, 88, 228, ${alpha})`);
+        g.addColorStop(0.5,  `rgba(78, 50, 178, ${alpha * 0.35})`);
+        g.addColorStop(1,    'rgba(38, 18, 118, 0)');
+      }
+      ctx.fillStyle = g;
       ctx.beginPath();
       ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-      if (window.perfMode) {
-        const a = alpha * 0.7;
-        ctx.fillStyle = p.comet ? `rgba(120,200,255,${a})`
-                      : p.core  ? `rgba(180,140,255,${a})`
-                      :           `rgba(100,60,200,${a})`;
-      } else {
-        const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
-        if (p.comet) {
-          g.addColorStop(0,   `rgba(180, 240, 255, ${alpha})`);
-          g.addColorStop(0.4, `rgba(80,  180, 255, ${alpha * 0.45})`);
-          g.addColorStop(1,   'rgba(20, 80, 200, 0)');
-        } else if (p.core) {
-          g.addColorStop(0,    `rgba(218, 198, 255, ${alpha})`);
-          g.addColorStop(0.35, `rgba(158, 112, 255, ${alpha * 0.50})`);
-          g.addColorStop(1,    'rgba(88, 48, 200, 0)');
-        } else {
-          g.addColorStop(0,    `rgba(128, 88, 228, ${alpha})`);
-          g.addColorStop(0.5,  `rgba(78, 50, 178, ${alpha * 0.35})`);
-          g.addColorStop(1,    'rgba(38, 18, 118, 0)');
-        }
-        ctx.fillStyle = g;
-      }
       ctx.fill();
     });
     ctx.restore();
@@ -449,9 +442,6 @@
     window.MeteorShower && window.MeteorShower.update(dt);
     window.MeteorShower && window.MeteorShower.draw();
 
-    window.ElectricField && window.ElectricField.update(dt);
-    window.ElectricField && window.ElectricField.drawHUD(ctx);
-
     if (shooting) {
       const tailX = shooting.x - shooting.dx * shooting.tail;
       const tailY = shooting.y - shooting.dy * shooting.tail;
@@ -508,12 +498,6 @@
 
   document.addEventListener('touchstart',  e => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
   document.addEventListener('touchmove',   e => e.preventDefault(), { passive: false });
-  let _lastTouchEnd = 0;
-  document.addEventListener('touchend', e => {
-    const now = Date.now();
-    if (now - _lastTouchEnd < 300) e.preventDefault();
-    _lastTouchEnd = now;
-  }, { passive: false });
   document.addEventListener('contextmenu', e => e.preventDefault());
   if ('ongesturestart' in window) {
     document.addEventListener('gesturestart',  e => e.preventDefault(), { passive: false });

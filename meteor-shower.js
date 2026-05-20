@@ -2,26 +2,36 @@
 (function () {
   const canvas = document.getElementById('stars-canvas');
   const ctx    = canvas.getContext('2d');
-  const { updateCooldownUI, addTrailPoint, getGlobeBounds } = window.CosmicUtils;
 
-  const COUNT          = 42;
-  const SPAWN_DURATION = 4.4;   // s to emit all meteors
+  const COUNT          = 28;
+  const SPAWN_DURATION = 1.4;   // s to emit all meteors
   const BASE_SPEED     = 800;   // px/s
   const SPEED_VARIANCE = 220;
   const SPREAD         = 130;   // perpendicular spread (total)
-  const BACK_OFFSET    = 0;     // spawn at release point, not behind it
-  const COOLDOWN_MAX   = 5.0;   // seconds between launches
+  const BACK_OFFSET    = 360;   // how far behind release to start spawning
+  const COOLDOWN_MAX   = 3.0;   // seconds between launches
 
   let showers  = [];
   let impacts  = [];
   let cooldown = 0;
 
-  function refreshCooldownUI() {
-    updateCooldownUI('meteor-shower', cooldown, COOLDOWN_MAX);
-    const cursorEl = document.querySelector('.gadget-cursor--meteor-shower');
-    if (cursorEl) {
-      const cur = parseFloat(cursorEl.style.opacity);
-      if (cur > 0) cursorEl.style.opacity = cooldown > 0 ? '0.52' : '1';
+  function updateCooldownUI() {
+    const pct = cooldown > 0
+      ? `${((1 - cooldown / COOLDOWN_MAX) * 100).toFixed(1)}%`
+      : '0%';
+    const active = cooldown > 0;
+    for (const el of [
+      document.getElementById('gadget-meteor-shower'),
+      document.querySelector('.gadget-cursor--meteor-shower'),
+    ]) {
+      if (!el) continue;
+      el.style.setProperty('--cd-pct', pct);
+      el.classList.toggle('on-cooldown', active);
+      if (el.classList.contains('gadget-cursor')) {
+        // Only dim/restore while cursor is actively shown; don't make it visible on mobile
+        const cur = parseFloat(el.style.opacity);
+        if (cur > 0) el.style.opacity = active ? '0.52' : '1';
+      }
     }
   }
 
@@ -39,19 +49,20 @@
       meteors: [],
     });
     cooldown = COOLDOWN_MAX;
-    refreshCooldownUI();
+    updateCooldownUI();
   }
 
   function spawnOne(s) {
     const spread = (Math.random() - 0.5) * SPREAD;
+    const back   = BACK_OFFSET + Math.random() * 90;
     const drift  = (Math.random() - 0.5) * 32;
     const sp     = BASE_SPEED + (Math.random() - 0.5) * SPEED_VARIANCE;
     s.meteors.push({
-      x:  s.ox + s.px * spread,
-      y:  s.oy + s.py * spread,
+      x:  s.ox - s.dx * back + s.px * spread,
+      y:  s.oy - s.dy * back + s.py * spread,
       vx: s.dx * sp + s.px * drift,
       vy: s.dy * sp + s.py * drift,
-      r:  (3.2 + Math.random() * 2.0) * (window.gadgetScale || 1),
+      r:  (2.2 + Math.random() * 1.4) * (window.gadgetScale || 1),
       trail: [],
       age: 0,
     });
@@ -60,17 +71,19 @@
   function update(dt) {
     if (cooldown > 0) {
       cooldown = Math.max(0, cooldown - dt);
-      refreshCooldownUI();
+      updateCooldownUI();
     }
 
-    const g    = getGlobeBounds();
-    const moon = window.getMoonScreenPos ? window.getMoonScreenPos() : null;
+    const allBHs  = window.BlackHole ? window.BlackHole.getAll() : [];
+    const globeEl = document.getElementById('globe-canvas');
+    const gr      = globeEl ? globeEl.getBoundingClientRect() : null;
+    const moon    = window.getMoonScreenPos ? window.getMoonScreenPos() : null;
 
     // ── Meteor-meteor collisions (all showers combined) ──────────
     {
       const flat = [];
       for (const s of showers) {
-        for (const m of s.meteors) flat.push({ s, m });
+        for (const m of s.meteors) { if (!m.swirl) flat.push({ s, m }); }
       }
       const dead = new Set();
       for (let i = flat.length - 1; i >= 1; i--) {
@@ -103,26 +116,57 @@
         const m = s.meteors[mi];
         m.age += dt;
 
-        addTrailPoint(m.trail, 8, m.x, m.y);
+        // Swirl into black hole
+        if (m.swirl) {
+          const sw   = m.swirl;
+          sw.age    += dt;
+          if (sw.bh.age >= sw.bh.maxAge) { s.meteors.splice(mi, 1); continue; }
+          const frac = sw.age / sw.maxAge;
+          const r    = sw.r * Math.pow(1 - frac, 0.65);
+          const bhF  = sw.bh.age / sw.bh.maxAge;
+          const bhEv = Math.max(0, (bhF - 0.92) / 0.08);
+          const rs   = sw.bh.baseRadius * Math.max(0.05, 1 - bhEv * 0.9);
+          if (frac >= 1 || r <= rs) { s.meteors.splice(mi, 1); continue; }
+          sw.angle += (3 + frac * 10) * dt;
+          m.x = sw.bh.x + Math.cos(sw.angle) * r;
+          m.y = sw.bh.y + Math.sin(sw.angle) * r;
+          continue;
+        }
+
+        // Black hole gravity
+        for (const bh of allBHs) {
+          const dx = bh.x - m.x, dy = bh.y - m.y;
+          const d  = Math.hypot(dx, dy);
+          if (d < bh.baseRadius * 8) {
+            m.swirl = { bh, angle: Math.atan2(m.y - bh.y, m.x - bh.x), r: Math.max(d, 4), age: 0, maxAge: 1.2 };
+            break;
+          }
+          if (d < bh.baseRadius * 30) {
+            const g = 1200000 / (d * d);
+            m.vx += (dx / d) * g * dt;
+            m.vy += (dy / d) * g * dt;
+          }
+        }
+        if (m.swirl) continue;
+
+        m.trail.unshift({ x: m.x, y: m.y });
+        if (m.trail.length > 8) m.trail.pop();
 
         m.x += m.vx * dt;
         m.y += m.vy * dt;
 
         let hit = false;
 
-        if (!hit && g && window.ElectricField && window.ElectricField.isActive() &&
-            Math.hypot(m.x - g.x, m.y - g.y) < g.r * window.ElectricField.SHIELD_FACTOR + m.r) {
-          window.ElectricField.impact(m.x, m.y);
-          spawnImpact(m.x, m.y, m.vx, m.vy);
-          hit = true;
-        }
-
-        if (!hit && g && Math.hypot(m.x - g.x, m.y - g.y) < g.r + m.r) {
-          window.dispatchEvent(new CustomEvent('comet-globe-impact', {
-            detail: { x: m.x, y: m.y, vx: m.vx * 0.055, vy: m.vy * 0.055, source: 'meteor' }
-          }));
-          spawnImpact(m.x, m.y, m.vx, m.vy);
-          hit = true;
+        if (gr) {
+          const gcx = gr.left + gr.width  * 0.5;
+          const gcy = gr.top  + gr.height * 0.5;
+          if (Math.hypot(m.x - gcx, m.y - gcy) < gr.width * 0.22 + m.r) {
+            window.dispatchEvent(new CustomEvent('comet-globe-impact', {
+              detail: { x: m.x, y: m.y, vx: m.vx * 0.055, vy: m.vy * 0.055, source: 'meteor' }
+            }));
+            spawnImpact(m.x, m.y, m.vx, m.vy);
+            hit = true;
+          }
         }
 
         if (!hit && moon && Math.hypot(m.x - moon.x, m.y - moon.y) < moon.r * 1.2 + m.r) {
@@ -133,7 +177,7 @@
           hit = true;
         }
 
-        if (!hit && window.Asteroids && window.Asteroids.checkHit(m.x, m.y, m.r * 2, 1)) {
+        if (!hit && window.Asteroids && window.Asteroids.checkHit(m.x, m.y, m.r * 2, 0.5)) {
           spawnImpact(m.x, m.y, m.vx, m.vy);
           hit = true;
         }
@@ -142,7 +186,7 @@
           const allComets = [...window.Comet.getAll()];
           for (const c of allComets) {
             if (!c.swirl && Math.hypot(m.x - c.x, m.y - c.y) < 28) {
-              window.Comet.damage(c, 1);
+              window.Comet.damage(c, 0.5);
               spawnImpact(m.x, m.y, m.vx, m.vy);
               hit = true;
               break;
@@ -150,7 +194,7 @@
           }
         }
 
-        if (hit || m.age > 7.5 ||
+        if (hit || m.age > 4.5 ||
             m.x < -500 || m.x > canvas.width  + 500 ||
             m.y < -500 || m.y > canvas.height + 500) {
           s.meteors.splice(mi, 1);
@@ -225,6 +269,27 @@
   }
 
   function drawMeteor(m) {
+    if (m.swirl) {
+      const frac  = m.swirl.age / m.swirl.maxAge;
+      const scale = Math.max(0, 1 - Math.pow(frac, 0.55));
+      if (scale < 0.02) return;
+      const r = Math.max(0.1, m.r * 3 * scale);
+      ctx.save();
+      ctx.globalAlpha = scale;
+      ctx.shadowColor = 'rgba(255, 160, 40, 1)';
+      ctx.shadowBlur  = 14 * scale;
+      const sg = ctx.createRadialGradient(m.x, m.y, 0, m.x, m.y, r);
+      sg.addColorStop(0,    'rgba(255, 255, 220, 1)');
+      sg.addColorStop(0.4,  'rgba(255, 170,  60, 0.85)');
+      sg.addColorStop(1,    'rgba(255,  80,  10, 0)');
+      ctx.fillStyle = sg;
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      return;
+    }
+
     const trailLen = m.trail.length;
 
     if (trailLen >= 2) {
@@ -244,21 +309,14 @@
     }
 
     // Outer glow
-    if (window.perfMode) {
-      ctx.fillStyle = 'rgba(255,175,70,0.35)';
-      ctx.beginPath();
-      ctx.arc(m.x, m.y, m.r * 2.5, 0, Math.PI * 2);
-      ctx.fill();
-    } else {
-      const grd = ctx.createRadialGradient(m.x, m.y, 0, m.x, m.y, m.r * 3.8);
-      grd.addColorStop(0,    'rgba(255,252,220,0.95)');
-      grd.addColorStop(0.32, 'rgba(255,175, 70,0.55)');
-      grd.addColorStop(1,    'rgba(255, 90, 15,0)');
-      ctx.fillStyle = grd;
-      ctx.beginPath();
-      ctx.arc(m.x, m.y, m.r * 3.8, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    const grd = ctx.createRadialGradient(m.x, m.y, 0, m.x, m.y, m.r * 3.8);
+    grd.addColorStop(0,    'rgba(255,252,220,0.95)');
+    grd.addColorStop(0.32, 'rgba(255,175, 70,0.55)');
+    grd.addColorStop(1,    'rgba(255, 90, 15,0)');
+    ctx.fillStyle = grd;
+    ctx.beginPath();
+    ctx.arc(m.x, m.y, m.r * 3.8, 0, Math.PI * 2);
+    ctx.fill();
 
     // Solid white core
     ctx.fillStyle = 'rgba(255,255,255,0.96)';
@@ -276,6 +334,7 @@
         const s = showers[si];
         for (let mi = s.meteors.length - 1; mi >= 0; mi--) {
           const m = s.meteors[mi];
+          if (m.swirl) continue;
           if (Math.hypot(cx - m.x, cy - m.y) <= r) {
             spawnImpact(m.x, m.y, m.vx, m.vy);
             s.meteors.splice(mi, 1);

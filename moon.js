@@ -46,8 +46,9 @@
 
   let moonOrbitAngle   = 0;
   let moonSelfAngle    = 0;
-  let moonOrbitSpeed   = 0;
-  let moonDeployed     = false;
+  let moonOrbitSpeed   = MOON_ORBIT_SPEED;
+  let moonDragging     = false;
+  let moonDragVel      = 0;
   let moonFrostPatches = [];
   let moonFreezeEnd   = 0;   // ms timestamp when freeze ends; 0 = not frozen
   let moonGlobalFrost = 0;   // 0–1 blend toward icy white for the whole moon
@@ -71,7 +72,35 @@
     return { mx, my, mz, px: cx + mx * s, py: cy + my * s, s };
   }
 
-function drawOrbitRing() {
+  // Gauss-Newton: find the orbit angle whose projected screen pos is closest to (msx,msy).
+  function nearestOrbitAngle(msx, msy, startAngle) {
+    const sinT = Math.sin(MOON_ORBIT_TILT);
+    const cosT = Math.cos(MOON_ORBIT_TILT);
+    let θ = startAngle;
+    for (let iter = 0; iter < 8; iter++) {
+      const sinθ = Math.sin(θ), cosθ = Math.cos(θ);
+      const omx  =  MOON_ORBIT_R * cosθ;
+      const omy  = -MOON_ORBIT_R * sinθ * sinT;
+      const omz  =  MOON_ORBIT_R * sinθ * cosT;
+      const denom = FOV_DIST + omz + R;
+      const s    = FOV_DIST / denom;
+      const px   = cx + omx * s;
+      const py   = cy + omy * s;
+      const domx = -MOON_ORBIT_R * sinθ;
+      const domy = -MOON_ORBIT_R * cosθ * sinT;
+      const domz =  MOON_ORBIT_R * cosθ * cosT;
+      const ds   = -FOV_DIST * domz / (denom * denom);
+      const dpx  = domx * s + omx * ds;
+      const dpy  = domy * s + omy * ds;
+      const num  = (px - msx) * dpx + (py - msy) * dpy;
+      const den  = dpx * dpx + dpy * dpy;
+      if (den < 1e-6) break;
+      θ -= Math.max(-0.3, Math.min(0.3, num / den));
+    }
+    return θ;
+  }
+
+  function drawOrbitRing() {
     ctx.beginPath();
     for (let i = 0; i <= 80; i++) {
       const θ  = (i / 80) * Math.PI * 2;
@@ -95,7 +124,7 @@ function drawOrbitRing() {
     }
 
     const mr         = MOON_R * s;
-    const depthAlpha = mz > 0 ? Math.max(0.3, 1 - mz / (MOON_ORBIT_R * 1.2)) : 1;
+    const depthAlpha = (mz > 0 && !moonDragging) ? Math.max(0.3, 1 - mz / (MOON_ORBIT_R * 1.2)) : 1;
     ctx.save();
     ctx.globalAlpha = depthAlpha;
 
@@ -286,7 +315,7 @@ function drawOrbitRing() {
   document.addEventListener('DOMContentLoaded', init);
 
   window.getMoonScreenPos = function () {
-    if (!canvas || !moonDeployed) return null;
+    if (!canvas) return null;
     const m    = getMoonPos();
     const rect = canvas.getBoundingClientRect();
     const scl  = rect.width / W;
@@ -295,7 +324,6 @@ function drawOrbitRing() {
 
   window.Moon = {
     update() {
-      if (!moonDeployed) return;
       moonSelfAngle += MOON_SELF_SPEED;
       const now = Date.now();
       if (moonFreezeEnd > 0) {
@@ -306,10 +334,12 @@ function drawOrbitRing() {
           const fadeAge   = (now - moonFreezeEnd) / 1000;
           moonGlobalFrost = Math.max(0, 1 - fadeAge / 2.5);
           if (moonGlobalFrost <= 0) moonFreezeEnd = 0;
-          moonOrbitSpeed += (MOON_ORBIT_SPEED - moonOrbitSpeed) * MOON_ORBIT_DECAY;
-          moonOrbitAngle += moonOrbitSpeed;
+          if (!moonDragging) {
+            moonOrbitSpeed += (MOON_ORBIT_SPEED - moonOrbitSpeed) * MOON_ORBIT_DECAY;
+            moonOrbitAngle += moonOrbitSpeed;
+          }
         }
-      } else {
+      } else if (!moonDragging) {
         moonOrbitSpeed += (MOON_ORBIT_SPEED - moonOrbitSpeed) * MOON_ORBIT_DECAY;
         moonOrbitAngle += moonOrbitSpeed;
       }
@@ -317,8 +347,30 @@ function drawOrbitRing() {
     draw()          { drawMoon(getMoonPos()); },
     drawOrbitRing() { drawOrbitRing(); },
     getPos()        { return getMoonPos(); },
-    isDeployed()    { return moonDeployed; },
-    deploy()        { moonDeployed = true; },
-    undeploy()      { moonDeployed = false; moonOrbitAngle = 0; moonOrbitSpeed = 0; },
+    isDragging()    { return moonDragging; },
+    isOver(x, y) {
+      const m = getMoonPos();
+      return Math.hypot(x - m.px, y - m.py) < MOON_R * m.s * 2.0;
+    },
+    tryGrab(x, y) {
+      const m = getMoonPos();
+      if (Math.hypot(x - m.px, y - m.py) < MOON_R * m.s * 2.0) {
+        moonDragging = true;
+        moonDragVel  = 0;
+        return true;
+      }
+      return false;
+    },
+    drag(x, y) {
+      const prev     = moonOrbitAngle;
+      moonOrbitAngle = nearestOrbitAngle(x, y, moonOrbitAngle);
+      const dAngle   = moonOrbitAngle - prev;
+      moonDragVel    = moonDragVel * 0.7 + Math.max(-0.05, Math.min(0.05, dAngle)) * 0.3;
+    },
+    release() {
+      if (!moonDragging) return;
+      moonDragging   = false;
+      moonOrbitSpeed = Math.max(-0.22, Math.min(0.22, moonDragVel * 2.0));
+    },
   };
 })();

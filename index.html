@@ -12,88 +12,54 @@
   <canvas id="globe-canvas"></canvas>
 
   <div id="gadget-inventory">
-<div class="gadget-slot" data-gadget="blackhole" id="gadget-blackhole">
-      <svg class="gadget-blackhole-icon" viewBox="-14 -14 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <!-- Outer lensing halo -->
-        <circle r="12.5" stroke="rgba(155,65,255,0.16)" stroke-width="2.8"/>
-        <!-- Disk group, tilted for depth -->
-        <g transform="rotate(-18)">
-          <!-- Back arc (upper, behind horizon) -->
-          <path d="M -10.5,0 A 10.5,3.8 0 0 0 10.5,0"
-                stroke="rgba(255,130,20,0.24)" stroke-width="2.8" stroke-linecap="round"/>
-          <!-- Event horizon -->
-          <circle r="5.1" fill="#000"/>
-          <!-- Photon ring -->
-          <circle r="5.75" stroke="rgba(215,120,255,0.90)" stroke-width="0.7"/>
-          <!-- Secondary glow ring -->
-          <circle r="6.65" stroke="rgba(155,60,250,0.26)" stroke-width="1.9"/>
-          <!-- Front arc — soft outer glow -->
-          <path d="M -10.5,0 A 10.5,3.8 0 0 1 10.5,0"
-                stroke="rgba(255,155,35,0.40)" stroke-width="6.5" stroke-linecap="round"/>
-          <!-- Front arc — bright core -->
-          <path d="M -10.5,0 A 10.5,3.8 0 0 1 10.5,0"
-                stroke="rgba(255,238,155,0.97)" stroke-width="2.2" stroke-linecap="round"/>
-          <!-- Inner hot ring (innermost edge, nearest horizon) -->
-          <path d="M -6.5,0 A 6.5,2.4 0 0 1 6.5,0"
-                stroke="rgba(255,252,232,0.88)" stroke-width="0.9" stroke-linecap="round"/>
-        </g>
-      </svg>
-      <div class="cooldown-ring"></div>
+    <div class="gadget-slot" data-gadget="blackhole" id="gadget-blackhole">
       <div class="gadget-tooltip">
         <span class="gadget-tooltip-name">Black Hole</span>
         <span class="gadget-tooltip-hint">Click to place</span>
       </div>
     </div>
-
+    <div class="gadget-slot" data-gadget="spaceship" id="gadget-spaceship">
+      <svg class="gadget-ship-icon" viewBox="-13 -16 26 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <polygon points="0,-15 -12,7 -5,2 0,11 5,2 12,7"
+          fill="#6848b8" fill-opacity="0.93"
+          stroke="#c0a8ff" stroke-width="1.3" stroke-linejoin="round"/>
+        <ellipse cx="0" cy="-6" rx="2.5" ry="4.5"
+          fill="#98dcff" fill-opacity="0.90"
+          stroke="#c8eeff" stroke-width="0.7" stroke-opacity="0.55"/>
+      </svg>
+      <div class="gadget-tooltip">
+        <span class="gadget-tooltip-name">Spaceship</span>
+        <span class="gadget-tooltip-hint">Click &amp; drag to fly</span>
+      </div>
+    </div>
     <div class="gadget-slot" data-gadget="comet" id="gadget-comet">
-      <div class="cooldown-ring"></div>
       <div class="gadget-tooltip">
         <span class="gadget-tooltip-name">Comet</span>
-        <span class="gadget-tooltip-hint">Click to deploy</span>
+        <span class="gadget-tooltip-hint">Drag to throw</span>
       </div>
     </div>
     <div class="gadget-slot" data-gadget="meteor-shower" id="gadget-meteor-shower">
       <div class="cooldown-ring"></div>
       <div class="gadget-tooltip">
         <span class="gadget-tooltip-name">Meteor Shower</span>
-        <span class="gadget-tooltip-hint">Click to deploy</span>
+        <span class="gadget-tooltip-hint">Drag to aim</span>
       </div>
     </div>
-    <div class="gadget-slot" data-gadget="electric-field" id="gadget-electric-field">
-      <div class="cooldown-ring"></div>
-      <svg class="gadget-electric-field-icon" viewBox="-14 -14 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <!-- Shield ring -->
-        <circle r="11" stroke="rgba(80,200,255,0.72)" stroke-width="1.3"/>
-        <!-- Inner glow ring -->
-        <circle r="6.5" stroke="rgba(110,215,255,0.22)" stroke-width="0.7"/>
-        <!-- Lightning bolt -->
-        <path d="M2.5,-9 L-1.5,-1 L1,-1 L-2.5,9 L1.5,1 L-1,1 Z" fill="rgba(145,228,255,0.96)"/>
-        <!-- Cardinal sparks -->
-        <line x1="11.8" y1="0" x2="13.5" y2="0" stroke="rgba(160,235,255,0.82)" stroke-width="1.2" stroke-linecap="round"/>
-        <line x1="-11.8" y1="0" x2="-13.5" y2="0" stroke="rgba(160,235,255,0.82)" stroke-width="1.2" stroke-linecap="round"/>
-        <line x1="0" y1="-11.8" x2="0" y2="-13.5" stroke="rgba(160,235,255,0.82)" stroke-width="1.2" stroke-linecap="round"/>
-        <line x1="0" y1="11.8" x2="0" y2="13.5" stroke="rgba(160,235,255,0.65)" stroke-width="1.2" stroke-linecap="round"/>
+    <div class="gadget-slot" data-gadget="asteroid" id="gadget-asteroid">
+      <svg class="gadget-asteroid-icon" viewBox="-20 -20 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <polygon points="0,-18 10,-13 17,-4 15,9 6,17 -7,16 -16,7 -15,-6 -8,-16"
+          fill="rgba(0,28,32,0.85)"
+          stroke="#00f5ff" stroke-width="1.6" stroke-linejoin="round"/>
+        <circle cx="3" cy="-4" r="2.5" fill="rgba(0,245,255,0.12)" stroke="#00f5ff" stroke-width="0.8"/>
+        <circle cx="-5" cy="6" r="1.5" fill="rgba(0,245,255,0.10)" stroke="#00f5ff" stroke-width="0.6"/>
       </svg>
       <div class="gadget-tooltip">
-        <span class="gadget-tooltip-name">Electric Field</span>
-        <span class="gadget-tooltip-hint">Click to activate</span>
+        <span class="gadget-tooltip-name">Asteroid</span>
+        <span class="gadget-tooltip-hint">Click to spawn</span>
       </div>
     </div>
   </div>
 
-  <button id="perf-toggle" class="perf-toggle" aria-label="Toggle performance mode">
-    <span class="perf-toggle-track">
-      <span class="perf-toggle-thumb"></span>
-    </span>
-  </button>
-
-  <button id="mobile-toggle" class="perf-toggle" aria-label="Toggle mobile control mode">
-    <span class="perf-toggle-track">
-      <span class="perf-toggle-thumb"></span>
-    </span>
-  </button>
-
-  <script src="utils.js"></script>
   <script src="moon.js"></script>
   <script src="globe.js"></script>
   <script src="blackhole.js"></script>
@@ -101,7 +67,6 @@
   <script src="asteroids.js"></script>
   <script src="spaceship.js"></script>
   <script src="meteor-shower.js"></script>
-  <script src="electric-field.js"></script>
   <script src="gadgets.js"></script>
   <script src="stars.js"></script>
 </body>
